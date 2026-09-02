@@ -1,0 +1,20 @@
+{
+  "schema": "ladder-spec.v1",
+  "min_reference_key_len": 4,
+  "max_identifier_occurrences": 2,
+  "max_depth": 40,
+  "type_rules": {
+    "IDENTIFIER": "whole-token containment; a match flanked by an identifier-continuation character is a match inside a LONGER identifier",
+    "EMAIL": "as IDENTIFIER, with @ + % also continuation characters",
+    "URL": "parsed: scheme + host + port + path + query + fragment; default port and redundant trailing slash normalised away, query and fragment KEPT",
+    "NUMBER": "exact decimal equality against a numeric token in the corpus; thousands separators stripped on both sides; no epsilon",
+    "DATE": "parsed ISO-8601 calendar date; an unparseable value fails CLOSED",
+    "TEXT": "word-boundary, whitespace-flexible phrase match"
+  },
+  "sink_assignment": {
+    "pay_invoice": 3,
+    "update_vendor_bank_details": 3,
+    "send_remittance_email": 4
+  },
+  "sink_assignment_note": "Per-sink, never global. Walk each sink up the ladder until utility cost exceeds tolerance, then stop THERE, for THAT sink. pay_invoice and update_vendor_bank_details stop at rung 3 because a payment IBAN is resolved from the invoice the instruction names and is never quoted in it; send_remittance_email goes to rung 4 because a remittance address IS quoted."
+}

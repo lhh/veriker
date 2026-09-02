@@ -1,0 +1,26 @@
+{
+  "bundle_id": "span-claim-minimal-0001",
+  "created_at": "2026-08-29T00:00:00Z",
+  "cross_refs": {},
+  "files": {
+    "corpus/27200c803e93cbf0b19f784798c11b80203e15bc553c8e2895ce55ea2d115b53.txt": "27200c803e93cbf0b19f784798c11b80203e15bc553c8e2895ce55ea2d115b53",
+    "inputs/span_claim.json": "a4145b958262a1a0a84ce04cf4c1d9e1522736bccbd48b0572789453693d2312",
+    "outputs/quoted_span.json": "9b6a88de367300f1158bb5e6d90cf24eea6341112c1b83852c1ca93df16aa958",
+    "payload/extraction_record.json": "0f355cb48d8e0911df8ce56d9b9a537a4f37a0f6d1bb5aa17e053df472281764"
+  },
+  "outputs": [
+    {
+      "conforms_to": "spec/span_claim.spec.json",
+      "output_id": "quoted_span",
+      "type": "extracted_span"
+    }
+  ],
+  "payload": {},
+  "schema_version": "vcp-v1.1-canary4",
+  "spec_files": {
+    "span_claim.spec.json": "4611ee2e58195e116966eccb6d692a9831524acf8e639ff1bae4a14a842b423e"
+  },
+  "typed_checks": [
+    "file_integrity_many_small"
+  ]
+}

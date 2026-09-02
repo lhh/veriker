@@ -1,0 +1,14 @@
+{
+  "schema": "pilot.v1",
+  "pilot": "agent_dry_run_minimal",
+  "title": "agent_dry_run_minimal — Audit Bundle Quick-Start",
+  "domain": "agent_action_governance",
+  "expected_verdict": "PASS",
+  "bundle_count": 0,
+  "has_top_level_manifest": false,
+  "has_build_script": true,
+  "schema_versions": ["vcp-v1.1-canary4"],
+  "typed_checks": ["spec_sha_pin", "file_integrity_many_small", "agent_dry_run", "coverage_sum_invariant"],
+  "attack_classes_covered": [],
+  "last_verified": null
+}

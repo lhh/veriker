@@ -1,0 +1,35 @@
+{
+  "schema": "pilot.v1",
+  "pilot": "corner_load_equilibrium_minimal",
+  "title": "corner_load_equilibrium_minimal \u2014 V-Kernel S0 pilot (vehicle-dynamics corner-load admissibility)",
+  "domain": "uncategorized",
+  "expected_verdict": "PASS",
+  "bundle_count": 0,
+  "has_top_level_manifest": false,
+  "has_build_script": true,
+  "schema_versions": [
+    "vcp-v1.1-canary4"
+  ],
+  "typed_checks": [
+    "file_integrity_many_small"
+  ],
+  "attack_classes_covered": [
+    "spec_pinned:tampered_value",
+    "spec_pinned:no_anchor",
+    "spec_pinned:producer_weakened_spec",
+    "model:out_of_distribution_extrapolation"
+  ],
+  "spec_pinned_dispatch": {
+    "output_id": "corner_load_vertical_residual",
+    "type": "corner_load_vertical_residual",
+    "conforms_to": "spec/corner_load_equilibrium.spec.json",
+    "comparator_kind": "rational_band",
+    "binding_spec": "spec_pinned/corner_load_equilibrium.spec.json",
+    "demo": "examples/corner_load_equilibrium_minimal/_build_bundle.py --profile drift"
+  },
+  "last_verified": null,
+  "build_profiles": [
+    "clean",
+    "drift"
+  ]
+}

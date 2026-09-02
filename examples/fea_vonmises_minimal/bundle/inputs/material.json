@@ -1,0 +1,8 @@
+{
+  "E": 205000.0,
+  "model": "linear_elastic_isotropic",
+  "nu": 0.29,
+  "schema": "fea-material-v1",
+  "stress_state": "plane_stress",
+  "thickness": 3.0
+}

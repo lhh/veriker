@@ -1,0 +1,238 @@
+{
+  "bundle_id": "chat-log-redaction-minimal-rc",
+  "created_at": "2026-05-18T00:00:00Z",
+  "cross_refs": {},
+  "files": {
+    "ChatLogRedactionReDerivationCheck.py": "cc696e8c36868a2436d23e6b04c5d82f8bcd08449ed1a9357f6b7ddefb5b08d3",
+    "README.md": "91064d6e60139d5839c3dd58699db5fb28449d82e2a9462390acb52db3cab579",
+    "_build_bundle.py": "f560af5ec17400326a65ae06dbf015fc2521b87c69aaeaec836e47ffe9b1888c",
+    "chat_log_redaction_recompute.py": "c70731db88453e38e67e04d260c2bbcac6c146bf924a3e8015e55eac3a57398a",
+    "inputs/redaction_policy.json": "32b2cda107ca7a204e5c0a2a2cb0299ea9be2a8441a5c60d3f74d22eb2d0b5c0",
+    "inputs/transcript.txt": "72f6adc213b2b3ae5369c759cd602da3bf00f1aba8120f31f890d32e0dbe52fa",
+    "payload/redaction_result.json": "ed06cf3ebd0cab18281b00a4095d4aeb18c9f166977e51c1e9cff8ba33f029cd",
+    "pilot.json": "c579ed429215bd928d0f67d3a353a8764831d855f710b873400ff18aeaa48372",
+    "re_derive/chat_log_redaction_pack.py": "fc7a6d188e78886080431f745492dbfae28d01745cb7d6ecc8d19bf053b68428",
+    "spec_pinned/chat_log_redaction.spec.json": "2bb12ac7c1ceb2a762dad5adae43c12d9f9ef2c6f49254c82241f92fad393507",
+    "spec_pinned_check.py": "1e7254ab9fd2c9a2f651a36b6632618d6cb7b98b804d827df355d07bd9f15074",
+    "verify.py": "7cebd61f0b67e7ea8baa3c69b4809810a8b6ca507e3cafd7c49a2c13adf1c7d7"
+  },
+  "fragment_anchors": {
+    "span-000-PERSON": {
+      "end": 27,
+      "kind": "byte_offset",
+      "source_cid": "sha256:72f6adc213b2b3ae5369c759cd602da3bf00f1aba8120f31f890d32e0dbe52fa",
+      "start": 22
+    },
+    "span-001-PERSON": {
+      "end": 36,
+      "kind": "byte_offset",
+      "source_cid": "sha256:72f6adc213b2b3ae5369c759cd602da3bf00f1aba8120f31f890d32e0dbe52fa",
+      "start": 33
+    },
+    "span-002-EMAIL": {
+      "end": 106,
+      "kind": "byte_offset",
+      "source_cid": "sha256:72f6adc213b2b3ae5369c759cd602da3bf00f1aba8120f31f890d32e0dbe52fa",
+      "start": 80
+    },
+    "span-003-PERSON": {
+      "end": 132,
+      "kind": "byte_offset",
+      "source_cid": "sha256:72f6adc213b2b3ae5369c759cd602da3bf00f1aba8120f31f890d32e0dbe52fa",
+      "start": 129
+    },
+    "span-004-PERSON": {
+      "end": 145,
+      "kind": "byte_offset",
+      "source_cid": "sha256:72f6adc213b2b3ae5369c759cd602da3bf00f1aba8120f31f890d32e0dbe52fa",
+      "start": 140
+    },
+    "span-005-PERSON": {
+      "end": 180,
+      "kind": "byte_offset",
+      "source_cid": "sha256:72f6adc213b2b3ae5369c759cd602da3bf00f1aba8120f31f890d32e0dbe52fa",
+      "start": 164
+    },
+    "span-006-PHONE": {
+      "end": 224,
+      "kind": "byte_offset",
+      "source_cid": "sha256:72f6adc213b2b3ae5369c759cd602da3bf00f1aba8120f31f890d32e0dbe52fa",
+      "start": 210
+    },
+    "span-007-PERSON": {
+      "end": 253,
+      "kind": "byte_offset",
+      "source_cid": "sha256:72f6adc213b2b3ae5369c759cd602da3bf00f1aba8120f31f890d32e0dbe52fa",
+      "start": 248
+    },
+    "span-008-ADDRESS": {
+      "end": 330,
+      "kind": "byte_offset",
+      "source_cid": "sha256:72f6adc213b2b3ae5369c759cd602da3bf00f1aba8120f31f890d32e0dbe52fa",
+      "start": 286
+    },
+    "span-009-PERSON": {
+      "end": 357,
+      "kind": "byte_offset",
+      "source_cid": "sha256:72f6adc213b2b3ae5369c759cd602da3bf00f1aba8120f31f890d32e0dbe52fa",
+      "start": 354
+    },
+    "span-010-SSN": {
+      "end": 405,
+      "kind": "byte_offset",
+      "source_cid": "sha256:72f6adc213b2b3ae5369c759cd602da3bf00f1aba8120f31f890d32e0dbe52fa",
+      "start": 394
+    },
+    "span-011-PERSON": {
+      "end": 457,
+      "kind": "byte_offset",
+      "source_cid": "sha256:72f6adc213b2b3ae5369c759cd602da3bf00f1aba8120f31f890d32e0dbe52fa",
+      "start": 452
+    },
+    "span-012-PERSON": {
+      "end": 507,
+      "kind": "byte_offset",
+      "source_cid": "sha256:72f6adc213b2b3ae5369c759cd602da3bf00f1aba8120f31f890d32e0dbe52fa",
+      "start": 495
+    },
+    "span-013-PHONE": {
+      "end": 539,
+      "kind": "byte_offset",
+      "source_cid": "sha256:72f6adc213b2b3ae5369c759cd602da3bf00f1aba8120f31f890d32e0dbe52fa",
+      "start": 524
+    },
+    "span-014-PERSON": {
+      "end": 566,
+      "kind": "byte_offset",
+      "source_cid": "sha256:72f6adc213b2b3ae5369c759cd602da3bf00f1aba8120f31f890d32e0dbe52fa",
+      "start": 563
+    },
+    "span-015-EMAIL": {
+      "end": 627,
+      "kind": "byte_offset",
+      "source_cid": "sha256:72f6adc213b2b3ae5369c759cd602da3bf00f1aba8120f31f890d32e0dbe52fa",
+      "start": 605
+    },
+    "span-016-PERSON": {
+      "end": 656,
+      "kind": "byte_offset",
+      "source_cid": "sha256:72f6adc213b2b3ae5369c759cd602da3bf00f1aba8120f31f890d32e0dbe52fa",
+      "start": 651
+    },
+    "span-017-PERSON": {
+      "end": 719,
+      "kind": "byte_offset",
+      "source_cid": "sha256:72f6adc213b2b3ae5369c759cd602da3bf00f1aba8120f31f890d32e0dbe52fa",
+      "start": 706
+    },
+    "span-018-EMAIL": {
+      "end": 753,
+      "kind": "byte_offset",
+      "source_cid": "sha256:72f6adc213b2b3ae5369c759cd602da3bf00f1aba8120f31f890d32e0dbe52fa",
+      "start": 723
+    },
+    "span-019-PERSON": {
+      "end": 780,
+      "kind": "byte_offset",
+      "source_cid": "sha256:72f6adc213b2b3ae5369c759cd602da3bf00f1aba8120f31f890d32e0dbe52fa",
+      "start": 777
+    },
+    "span-020-PERSON": {
+      "end": 879,
+      "kind": "byte_offset",
+      "source_cid": "sha256:72f6adc213b2b3ae5369c759cd602da3bf00f1aba8120f31f890d32e0dbe52fa",
+      "start": 874
+    },
+    "span-021-ADDRESS": {
+      "end": 949,
+      "kind": "byte_offset",
+      "source_cid": "sha256:72f6adc213b2b3ae5369c759cd602da3bf00f1aba8120f31f890d32e0dbe52fa",
+      "start": 914
+    },
+    "span-022-PERSON": {
+      "end": 976,
+      "kind": "byte_offset",
+      "source_cid": "sha256:72f6adc213b2b3ae5369c759cd602da3bf00f1aba8120f31f890d32e0dbe52fa",
+      "start": 973
+    },
+    "span-023-PASSPORT": {
+      "end": 1010,
+      "kind": "byte_offset",
+      "source_cid": "sha256:72f6adc213b2b3ae5369c759cd602da3bf00f1aba8120f31f890d32e0dbe52fa",
+      "start": 1001
+    },
+    "span-024-PERSON": {
+      "end": 1061,
+      "kind": "byte_offset",
+      "source_cid": "sha256:72f6adc213b2b3ae5369c759cd602da3bf00f1aba8120f31f890d32e0dbe52fa",
+      "start": 1056
+    },
+    "span-025-SSN": {
+      "end": 1111,
+      "kind": "byte_offset",
+      "source_cid": "sha256:72f6adc213b2b3ae5369c759cd602da3bf00f1aba8120f31f890d32e0dbe52fa",
+      "start": 1100
+    },
+    "span-026-PERSON": {
+      "end": 1162,
+      "kind": "byte_offset",
+      "source_cid": "sha256:72f6adc213b2b3ae5369c759cd602da3bf00f1aba8120f31f890d32e0dbe52fa",
+      "start": 1159
+    },
+    "span-027-PERSON": {
+      "end": 1200,
+      "kind": "byte_offset",
+      "source_cid": "sha256:72f6adc213b2b3ae5369c759cd602da3bf00f1aba8120f31f890d32e0dbe52fa",
+      "start": 1188
+    },
+    "span-028-EMAIL": {
+      "end": 1239,
+      "kind": "byte_offset",
+      "source_cid": "sha256:72f6adc213b2b3ae5369c759cd602da3bf00f1aba8120f31f890d32e0dbe52fa",
+      "start": 1217
+    },
+    "span-029-PERSON": {
+      "end": 1268,
+      "kind": "byte_offset",
+      "source_cid": "sha256:72f6adc213b2b3ae5369c759cd602da3bf00f1aba8120f31f890d32e0dbe52fa",
+      "start": 1263
+    },
+    "span-030-PHONE": {
+      "end": 1311,
+      "kind": "byte_offset",
+      "source_cid": "sha256:72f6adc213b2b3ae5369c759cd602da3bf00f1aba8120f31f890d32e0dbe52fa",
+      "start": 1297
+    },
+    "span-031-PERSON": {
+      "end": 1360,
+      "kind": "byte_offset",
+      "source_cid": "sha256:72f6adc213b2b3ae5369c759cd602da3bf00f1aba8120f31f890d32e0dbe52fa",
+      "start": 1357
+    },
+    "span-032-IP_ADDRESS": {
+      "end": 1419,
+      "kind": "byte_offset",
+      "source_cid": "sha256:72f6adc213b2b3ae5369c759cd602da3bf00f1aba8120f31f890d32e0dbe52fa",
+      "start": 1405
+    },
+    "span-033-PERSON": {
+      "end": 1469,
+      "kind": "byte_offset",
+      "source_cid": "sha256:72f6adc213b2b3ae5369c759cd602da3bf00f1aba8120f31f890d32e0dbe52fa",
+      "start": 1464
+    },
+    "span-034-PHONE": {
+      "end": 1524,
+      "kind": "byte_offset",
+      "source_cid": "sha256:72f6adc213b2b3ae5369c759cd602da3bf00f1aba8120f31f890d32e0dbe52fa",
+      "start": 1510
+    }
+  },
+  "payload": {},
+  "schema_version": "vcp-v1.1-canary4",
+  "spec_files": {},
+  "typed_checks": [
+    "file_integrity_many_small",
+    "re_derivation_invocation"
+  ]
+}

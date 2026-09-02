@@ -1,0 +1,39 @@
+{
+  "schema": "pilot.v1",
+  "pilot": "event_log_replay_minimal",
+  "title": "event_log_replay_minimal — replay an append-only log to a record digest",
+  "domain": "asset_maintenance_records",
+  "expected_verdict": "PASS",
+  "bundle_count": 1,
+  "has_top_level_manifest": false,
+  "has_build_script": true,
+  "schema_versions": [
+    "vcp-v1.1-canary4"
+  ],
+  "typed_checks": [
+    "file_integrity_many_small"
+  ],
+  "attack_classes_covered": [
+    "event_log_replay:tampered_claimed_digest",
+    "event_log_replay:dropped_amend",
+    "event_log_replay:reordered_amends",
+    "event_log_replay:forged_amend",
+    "event_log_replay:decoy_second_log",
+    "event_log_replay:missing_log",
+    "spec_pinned:anchor_inside_bundle"
+  ],
+  "scope_limits_demonstrated": [
+    "an appended LOG event does not move the record",
+    "erasing every LOG event does not move the record either — a fold to state cannot see history that never entered the record",
+    "two different tamperings reaching one state produce one digest"
+  ],
+  "spec_pinned_dispatch": {
+    "output_id": "service_record_digest",
+    "type": "maintenance_record_digest",
+    "conforms_to": "spec/event_log_replay.spec.json",
+    "comparator_kind": "exact",
+    "binding_spec": "spec_pinned/event_log_replay.spec.json",
+    "demo": "examples/event_log_replay_minimal/verify.py"
+  },
+  "last_verified": null
+}

@@ -1,0 +1,18 @@
+{
+  "spec_id": "iso42001.dataquality.v1",
+  "description": "Auditor binding spec for ISO/IEC 42001 A.7 (Data for AI Systems) data-quality metric re-derivation. Binds three output types (data_completeness_pct, data_duplicate_rate_pct, data_positive_rate_pct) to the SAME verifier-side primitive 'iso42001_dataquality_recompute' under the SAME rational_band comparator (epsilon=1e-9). Identical comparator across all three satisfies the substrate monotone-strictness invariant (a primitive bound by >=2 types must carry an identical comparator). The verifier re-derives each metric as an EXACT rational (int arithmetic only, zero float ambiguity on the accept path); the producer commits the UNROUNDED float of the same aggregation rule (no terminal rounding). Epsilon=1e-9 covers only the producer's float division(s) — each percentage is bounded by 100, so binary64 representation error is at most ~1.5e-14, and 1e-9 is generous headroom over that; it covers NOTHING on the recompute side, which is exact. (data_positive_rate_pct's honest value on the frozen fixture is the non-terminating 1000/19 — the poster child for why the recompute must stay exact-rational rather than float.) Metric rules and tolerance are AUTHORITY-PINNED here, not producer-asserted. Re-derivability of the reported figures only — NOT a judgement that the dataset is fit for training, and NOT A.7 control conformance.",
+  "types": {
+    "data_completeness_pct": {
+      "primitive_id": "iso42001_dataquality_recompute",
+      "comparator": {"kind": "rational_band", "params": {"epsilon": 1e-9}}
+    },
+    "data_duplicate_rate_pct": {
+      "primitive_id": "iso42001_dataquality_recompute",
+      "comparator": {"kind": "rational_band", "params": {"epsilon": 1e-9}}
+    },
+    "data_positive_rate_pct": {
+      "primitive_id": "iso42001_dataquality_recompute",
+      "comparator": {"kind": "rational_band", "params": {"epsilon": 1e-9}}
+    }
+  }
+}

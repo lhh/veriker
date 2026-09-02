@@ -1,0 +1,22 @@
+{
+  "max_depth": 40,
+  "max_identifier_occurrences": 2,
+  "min_reference_key_len": 4,
+  "schema": "ladder-spec.v1",
+  "sink_assignment": {
+    "schedule_transaction": 3,
+    "send_money": 3,
+    "update_password": 4,
+    "update_scheduled_transaction": 3,
+    "update_user_info": 2
+  },
+  "sink_assignment_note": "Per-sink, never global \u2014 and this suite is why. The intent rung (4) is FREE on AgentDojo travel and a 43-point tax on banking, because 41% of banking's destination values are resolved from the record rather than quoted. Shipping one rung suite-wide would tax every sink that did not need it.",
+  "type_rules": {
+    "DATE": "parsed ISO-8601 calendar date; an unparseable value fails CLOSED",
+    "EMAIL": "as IDENTIFIER, with @ + % also continuation characters",
+    "IDENTIFIER": "whole-token containment; a match flanked by an identifier-continuation character is a match inside a LONGER identifier",
+    "NUMBER": "exact decimal equality against a numeric token in the corpus; thousands separators stripped on both sides; no epsilon",
+    "TEXT": "word-boundary, whitespace-flexible phrase match",
+    "URL": "parsed: scheme + host + port + path + query + fragment; default port and redundant trailing slash normalised away, query and fragment KEPT"
+  }
+}

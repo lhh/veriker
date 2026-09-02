@@ -1,0 +1,35 @@
+{
+  "schema": "tool-schema.v1",
+  "domain": "accounts_payable",
+  "note": "Authored by whoever sets the gate. Committed and hashed; covered by the external anchor, because changing it changes every verdict in the bundle.",
+  "tools": {
+    "get_invoice": {
+      "args": {
+        "invoice_id": {"type": "IDENTIFIER", "authority": false}
+      }
+    },
+    "list_vendors": {
+      "args": {}
+    },
+    "pay_invoice": {
+      "args": {
+        "invoice_id": {"type": "IDENTIFIER", "authority": true},
+        "vendor_iban": {"type": "IDENTIFIER", "authority": true},
+        "amount_eur": {"type": "NUMBER", "authority": true},
+        "memo": {"type": "TEXT", "authority": false}
+      }
+    },
+    "send_remittance_email": {
+      "args": {
+        "recipients": {"type": "EMAIL", "authority": true},
+        "body": {"type": "TEXT", "authority": false}
+      }
+    },
+    "update_vendor_bank_details": {
+      "args": {
+        "vendor_id": {"type": "IDENTIFIER", "authority": true},
+        "new_iban": {"type": "IDENTIFIER", "authority": true}
+      }
+    }
+  }
+}

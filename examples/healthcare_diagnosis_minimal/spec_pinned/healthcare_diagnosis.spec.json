@@ -1,0 +1,21 @@
+{
+  "spec_id": "healthcare_diagnosis.v1",
+  "description": "Auditor binding spec for the healthcare_diagnosis_minimal clinical-decision-support re-derivation (Axis-2 spec-pinned dispatch). The representative re-derived output is the ordered list of icd10_code values from payload/diagnosis.json (categorical codes only). It is recomputed by traversing the committed decision rules (inputs/rules.json) in sorted rule_id order against the committed symptom set (inputs/symptoms.json): a rule fires iff every condition's symptom is present and meets min_severity, and each fired rule contributes its icd10_code to the ordered list. The traversal rule lives in the verifier primitive (healthcare_diagnosis_recompute); the comparator is pinned HERE by the auditor (exact, no params -- an ordered list of categorical ICD-10 code strings compared element-wise), not producer-asserted. A producer who ships a spec the auditor did not anchor (different SHA / different primitive_id) gets a SHA the anchor does not list, so dispatch fails closed. TIER-2 VOCABULARY NOTE (rational-band wave, RATIONAL_BAND_MIGRATION.md §4b.2): the per-candidate confidence float was ORIGINALLY excluded from this spec-pinned surface to keep the codes output exact-comparable -- that was a vocabulary limit (no float-safe comparator existed), not a durable scope decision. The healthcare_diagnosis_confidence type below dissolves it: confidence is now a first-class rational_band claim, one output per fired candidate (output_id 'confidence:<icd10_code>'), bound to its own primitive (healthcare_diagnosis_confidence_recompute) and never derived from the codes primitive. epsilon=1e-6 is the terminal 6dp quantization grain: confidence_weight is a 2-decimal JSON literal and severity_sum is an integer, so the product's true decimal value already sits on the 6dp grid and the round is a no-op up to float-representation noise many orders below 1e-6 (see RATIONAL_BAND_MIGRATION.md section 3, 'no-op terminal rounding'). A PASS over both types attests to the claims PRESENT in manifest.outputs; it does not, by itself, force every candidate's confidence to be declared -- that roster completeness is the separate coverage cross-check (confidence_coverage_check.ConfidenceCoverageCheck), which binds the declared confidence:<code> outputs to the codes claim's own code list and fails closed on a mismatch.",
+  "types": {
+    "healthcare_diagnosis_codes": {
+      "primitive_id": "healthcare_diagnosis_recompute",
+      "comparator": {
+        "kind": "exact"
+      }
+    },
+    "healthcare_diagnosis_confidence": {
+      "primitive_id": "healthcare_diagnosis_confidence_recompute",
+      "comparator": {
+        "kind": "rational_band",
+        "params": {
+          "epsilon": 1e-06
+        }
+      }
+    }
+  }
+}

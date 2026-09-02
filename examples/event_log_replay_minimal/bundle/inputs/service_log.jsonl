@@ -1,0 +1,5 @@
+{"actor":"commissioning","at":"2026-01-08T09:15:00Z","fields":{"asset_id":"PRESS-14","last_service":"2026-01-08","location":"bay 3","model":"hydraulic press, 40 t","service_interval_days":180,"status":"in_service"},"op":"CREATE","seq":1}
+{"actor":"inspector","at":"2026-02-19T11:02:00Z","note":"visual inspection, no findings","op":"LOG","seq":2}
+{"actor":"technician","at":"2026-07-06T14:40:00Z","op":"AMEND","patch":{"last_service":"2026-07-06","seal_kit_revision":"B","status":"in_service"},"seq":3}
+{"actor":"inspector","at":"2026-08-01T08:30:00Z","note":"routine check, seal weep noted","op":"LOG","seq":4}
+{"actor":"technician","at":"2026-08-21T16:05:00Z","op":"AMEND","patch":{"location":"bay 1","restriction":"25 t ceiling pending seal replacement","status":"restricted_use"},"seq":5}

@@ -1,0 +1,225 @@
+{
+  "all_faults_hash_consistent": true,
+  "control_fixture": "agentdojo_banking",
+  "deterministic": true,
+  "findings": "FINDINGS.md \u2014 M1 was MISSED on first run; see it before quoting a score",
+  "fixture": "procurement_ap",
+  "llm_calls": 0,
+  "negative_control": {
+    "bundle": "agentdojo_banking",
+    "consistency_problems": [],
+    "detections": 0,
+    "expected_detections": 0,
+    "internally_consistent_before_scoring": true,
+    "reason": ""
+  },
+  "prereg": "PREREGISTRATION.md (committed before this run)",
+  "rows": [
+    {
+      "agrees": true,
+      "expected": "CAUGHT",
+      "fault": "P1_ONE_ARTIFACT_DELETED_OTHER_FORGED",
+      "hash_consistent": true,
+      "hash_problems": [],
+      "observed": "CAUGHT",
+      "probe": "cli",
+      "reason": "FAIL  plugin:agent_dry_run                  [VERIFIER_INCOMPLETE] plugin 'agent_dry_run' could not conclude: typed check claimed but these are missing: ['payload/aggregate.json']",
+      "shape": "EDIT"
+    },
+    {
+      "agrees": true,
+      "expected": "CAUGHT",
+      "fault": "P2_OTHER_ARTIFACT_DELETED_FIRST_FORGED",
+      "hash_consistent": true,
+      "hash_problems": [],
+      "observed": "CAUGHT",
+      "probe": "cli",
+      "reason": "FAIL  plugin:agent_dry_run                  [VERIFIER_INCOMPLETE] plugin 'agent_dry_run' could not conclude: typed check claimed but these are missing: ['payload/verdicts.jsonl']",
+      "shape": "EDIT"
+    },
+    {
+      "agrees": true,
+      "expected": "CAUGHT",
+      "fault": "P3_ONLY_VERDICTS_LEFT_AND_FORGED",
+      "hash_consistent": true,
+      "hash_problems": [],
+      "observed": "CAUGHT",
+      "probe": "cli",
+      "reason": "FAIL  plugin:agent_dry_run                  [VERIFIER_INCOMPLETE] plugin 'agent_dry_run' could not conclude: typed check claimed but these are missing: ['payload/aggregate.json', 'coverage/dry_run_cov",
+      "shape": "EDIT"
+    },
+    {
+      "agrees": true,
+      "expected": "CAUGHT",
+      "fault": "F1_AGGREGATE_FLATTERED",
+      "hash_consistent": true,
+      "hash_problems": [],
+      "observed": "CAUGHT",
+      "probe": "both",
+      "reason": "AGGREGATE_MISMATCH: the per-sink table does not re-derive",
+      "shape": "EDIT"
+    },
+    {
+      "agrees": true,
+      "expected": "CAUGHT",
+      "fault": "F2_VERDICT_FLIPPED",
+      "hash_consistent": true,
+      "hash_problems": [],
+      "observed": "CAUGHT",
+      "probe": "both",
+      "reason": "VERDICT_FIELD_MISMATCH ('T-02', 4) verdict: bundle='ADMIT' re-derived='DENY'",
+      "shape": "EDIT"
+    },
+    {
+      "agrees": true,
+      "expected": "CAUGHT",
+      "fault": "F3_REFUSING_LAYER_RELABELLED",
+      "hash_consistent": true,
+      "hash_problems": [],
+      "observed": "CAUGHT",
+      "probe": "both",
+      "reason": "VERDICT_FIELD_MISMATCH ('T-03', 3) refusing_layer: bundle='rung_2_evidence' re-derived='rung_3_reference'",
+      "shape": "EDIT"
+    },
+    {
+      "agrees": true,
+      "expected": "CAUGHT",
+      "fault": "F4_COVERAGE_DENOMINATOR_SHRUNK",
+      "hash_consistent": true,
+      "hash_problems": [],
+      "observed": "CAUGHT",
+      "probe": "both",
+      "reason": "COVERAGE_MISMATCH: the coverage row does not re-derive",
+      "shape": "EDIT"
+    },
+    {
+      "agrees": true,
+      "expected": "CAUGHT",
+      "fault": "F5_VALUE_SHA_WRONG",
+      "hash_consistent": true,
+      "hash_problems": [],
+      "observed": "CAUGHT",
+      "probe": "both",
+      "reason": "VERDICT_FIELD_MISMATCH ('T-02', 4) refusing_value_sha256: bundle='0000000000000000000000000000000000000000000000000000000000000000' re-derived='df162b746d7c6d6f04ba9e704ddcd0e2a9a2cbae1f21a862d5cfeb72",
+      "shape": "EDIT"
+    },
+    {
+      "agrees": true,
+      "expected": "CAUGHT",
+      "fault": "F6_RUNG_5_CLAIMED",
+      "hash_consistent": true,
+      "hash_problems": [],
+      "observed": "CAUGHT",
+      "probe": "both",
+      "reason": "REFUSED UNEMITTABLE_RUNG: pay_invoice assigned rung 5; emittable rungs are [1, 2, 3, 4] (rung 5 is declared but UNBUILT)",
+      "shape": "EDIT"
+    },
+    {
+      "agrees": true,
+      "expected": "CAUGHT",
+      "fault": "F7_LABEL_BLOCK_WITHOUT_LABELS",
+      "hash_consistent": true,
+      "hash_problems": [],
+      "observed": "CAUGHT",
+      "probe": "both",
+      "reason": "AGGREGATE_MISMATCH: the per-sink table does not re-derive",
+      "shape": "EDIT"
+    },
+    {
+      "agrees": true,
+      "expected": "CAUGHT",
+      "fault": "F8_TRACE_ARG_EDITED",
+      "hash_consistent": true,
+      "hash_problems": [],
+      "observed": "CAUGHT",
+      "probe": "both",
+      "reason": "VERDICT_FIELD_MISMATCH ('T-03', 1) rung_reached: bundle=1 re-derived=3",
+      "shape": "EDIT"
+    },
+    {
+      "agrees": true,
+      "expected": "CAUGHT",
+      "fault": "F9_WORK_ORDER_TEXT_EDITED",
+      "hash_consistent": true,
+      "hash_problems": [],
+      "observed": "CAUGHT",
+      "probe": "both",
+      "reason": "VERDICT_FIELD_MISMATCH ('T-02', 1) rung_reached: bundle=3 re-derived=4",
+      "shape": "EDIT"
+    },
+    {
+      "agrees": true,
+      "expected": "CAUGHT",
+      "fault": "F10_SNAPSHOT_ENTRY_ADDED",
+      "hash_consistent": true,
+      "hash_problems": [],
+      "observed": "CAUGHT",
+      "probe": "both",
+      "reason": "VERDICT_FIELD_MISMATCH ('T-03', 1) rung_reached: bundle=1 re-derived=2",
+      "shape": "EDIT"
+    },
+    {
+      "agrees": true,
+      "expected": "CAUGHT",
+      "fault": "M1_TYPED_CHECK_UNCLAIMED",
+      "hash_consistent": true,
+      "hash_problems": [],
+      "observed": "CAUGHT",
+      "probe": "cli",
+      "reason": "FAIL  plugin:agent_dry_run                  [plugin_failed] plugin 'agent_dry_run' reported failure: AGGREGATE_MISMATCH: the per-sink table does not re-derive",
+      "shape": "EDIT"
+    },
+    {
+      "agrees": true,
+      "expected": "MISSED",
+      "fault": "N1_TRACE_DELETED_CONSISTENTLY",
+      "hash_consistent": true,
+      "hash_problems": [],
+      "observed": "MISSED",
+      "probe": "cli",
+      "reason": "",
+      "shape": "REBUILD"
+    },
+    {
+      "agrees": true,
+      "expected": "MISSED",
+      "fault": "N2_LADDER_SPEC_LOOSENED",
+      "hash_consistent": true,
+      "hash_problems": [],
+      "observed": "MISSED",
+      "probe": "cli",
+      "reason": "",
+      "shape": "REBUILD"
+    },
+    {
+      "agrees": true,
+      "expected": "MISSED",
+      "fault": "N3_ARG_TYPE_DOWNGRADED",
+      "hash_consistent": true,
+      "hash_problems": [],
+      "observed": "MISSED",
+      "probe": "cli",
+      "reason": "",
+      "shape": "REBUILD"
+    }
+  ],
+  "run": "agent_dry_run_fault_battery",
+  "score": {
+    "agrees_with_prereg": 14,
+    "families": 14,
+    "mechanical_caught": 10,
+    "mechanical_total": 10,
+    "mutant_control": {
+      "M1_TYPED_CHECK_UNCLAIMED": "CAUGHT"
+    },
+    "post_hoc_adversarial_pass": {
+      "P1_ONE_ARTIFACT_DELETED_OTHER_FORGED": "CAUGHT",
+      "P2_OTHER_ARTIFACT_DELETED_FIRST_FORGED": "CAUGHT",
+      "P3_ONLY_VERDICTS_LEFT_AND_FORGED": "CAUGHT"
+    },
+    "post_hoc_caught": 3,
+    "post_hoc_total": 3,
+    "structural_missed_as_predicted": 3,
+    "structural_total": 3
+  }
+}

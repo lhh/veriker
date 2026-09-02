@@ -1,0 +1,15 @@
+{
+  "spec_id": "agritech_sensor.v1",
+  "description": "Auditor binding spec for the agritech soil-sensor yield-score re-derivation (Axis-2 spec-pinned dispatch). The representative re-derived output is the scalar yield_score, computed from inputs/sensor_stream.json (48 hourly readings) and payload/fusion_weights.json as w_soil_moisture*mean(soil_moisture_pct) + w_soil_temp*mean(soil_temp_c) + w_npk*mean(npk_ppm) + w_rainfall*sum(rainfall_mm) + bias. The linear-weighted fusion aggregation rule lives in the verifier primitive (agritech_sensor_recompute), which re-derives the EXACT rational value (Fraction arithmetic over the committed float samples/weights, unrounded) — comparator kind rational_band, epsilon=1e-6 (TIGHTENED from the prior 1e-5). Unlike an int-weighted claim, here the products and sums involve arbitrary committed floats, so the producer's terminal round(score, 6) IS information-bearing; epsilon equals exactly the 6dp quantization grain, which covers that terminal rounding (half-grain worst case 5e-7) plus the producer's pre-round float error. That pre-round error is bounded by term-count x magnitude (O(10-100)) x binary64 ulp — a few times 1e-14 at these magnitudes — which is many orders below half-grain, so it is stated here, not assumed. The comparator and tolerance are pinned HERE by the auditor, not producer-asserted. A producer who ships a weaker spec gets a SHA the anchor does not list, so dispatch fails closed.",
+  "types": {
+    "agritech_yield_score": {
+      "primitive_id": "agritech_sensor_recompute",
+      "comparator": {
+        "kind": "rational_band",
+        "params": {
+          "epsilon": 1e-6
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "bundle_id": "fea-vonmises-minimal-0001",
+  "created_at": "2026-08-29T00:00:00Z",
+  "cross_refs": {},
+  "files": {
+    "inputs/bcs.json": "4eba2ee92a213ab9caac10c706bb982c4a23a5362b8b75acd8547d68db038147",
+    "inputs/material.json": "1366d42ae2c295147a4b6f51f5c496667473ea90a251f99b3acd082f81ca5b69",
+    "inputs/mesh.json": "68a3f61cd06ef7633c5c979e6bc4ce7295a0e3855e096231a0afb0b0f50dd1ec",
+    "outputs/fea_sigma_vm_max.json": "27efb1958735c4db67ea143a5592227df912133bd898ad961913910775a0a622",
+    "payload/displacement_field.json": "56489e63c6ef4512c8a9a4aa15c28245adb2ec28fd3e30f4579a9870a878bba9",
+    "payload/output_norms.json": "7e843840d26004120a3174f4dc9751fa02b171d36da7d90751e9bd16e5b329b6"
+  },
+  "outputs": [
+    {
+      "conforms_to": "spec/fea_vonmises.spec.json",
+      "output_id": "fea_sigma_vm_max",
+      "type": "fea_vonmises_sigma_vm_max"
+    }
+  ],
+  "payload": {},
+  "schema_version": "vcp-v1.1-canary4",
+  "spec_files": {
+    "fea_vonmises.spec.json": "52f2e642dfc58ee665ac9858b1685ab26c3bebac4e10ed526210ddc2493fc8a7",
+    "solver_config.json": "2c9e265a0e04bbdd946394d554c2ee421b3c9a227e45b2d2b05d04471cc03247"
+  },
+  "typed_checks": [
+    "file_integrity_many_small"
+  ]
+}

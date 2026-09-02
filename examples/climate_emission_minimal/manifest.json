@@ -1,0 +1,125 @@
+{
+  "bundle_id": "climate-emission-minimal-rc",
+  "created_at": "2026-05-18T00:00:00Z",
+  "cross_refs": {},
+  "files": {
+    "README.md": "ee25a890d19e6cfc25f4b3c71044f1e25177ce70031e4cbd7931f1ff23946bc1",
+    "_build_bundle.py": "2554c8041244a5ae04f7f828042a30facf1c5f719adeca8eb4a76ee35b9c7b67",
+    "_producer_compute.py": "476a59a87b90b437c942c43bf613ec2aaa2b977b6e4e54126797185bce7c305c",
+    "auditor_kit.py": "d11943570ac73fc56e2e19057e45aeaa71ac57960c3c84de5a45961306aad630",
+    "climate_attribution_recompute.py": "6dfd1eb5d644bb3a2e27b594ea0eabb3645abb316da9d7c0a499678ee81ac4df",
+    "inputs/supplier_chain.json": "f489cc22ed68dddbeb24fe65d3c00073fad47bb57cc2e49753b77a1c295cae46",
+    "outputs/climate_attribution_by_vendor.json": "8be67ba3d943d5edef21c4e20cd2b18f427c47a880cd465f51d43511959060ae",
+    "outputs/climate_total_scope3.json": "0fcdbfc2ad45b49bfe290afd4ae9a16e8b931428a21478d9fc5b16083c05d9f5",
+    "payload/emission_report.json": "122dc459b9a20c7f8df720a918402941580628145b4c11d364fd1168faf50f23",
+    "pilot.json": "6dbb454013836e6874e2d938ea9a6846ed562fd19858624c0a3c48a28e5a6580",
+    "spec_pinned/climate.spec.json": "c9bc95da6e59342f5f6c2019fdda3166019319ecb2a56828caff124122ec5d4d",
+    "spec_pinned/climate_emission.spec.json": "b792396f3557e4998c4baf5d3dceb878db38b369fab15994b0c04729e3b32284",
+    "spec_pinned_check.py": "e11a87c136e3cdb9880539f5152e934c815a943f89a8e262a6eb654735b06a4a",
+    "spec_pinned_multi_check.py": "0a809475fa27c198f5ffa8d6f00ca52f9f655ab9ecb2e8aa5aff6a4dac0142c1",
+    "verify.py": "3dfaf5aa4d9adef7e4556c2d19dfc7e599a92acfdad7a9fa9e3e451fe826d262"
+  },
+  "fragment_anchors": {
+    "T1-ALUM-001-ef": {
+      "kind": "opaque",
+      "kind_tag": "supplier_emission_anchor",
+      "locator": {
+        "factor_source": "synthetic-EF-v1.0/aluminium-primary",
+        "tier": 1,
+        "vendor_id": "T1-ALUM-001"
+      },
+      "source_cid": "sha256:f489cc22ed68dddbeb24fe65d3c00073fad47bb57cc2e49753b77a1c295cae46"
+    },
+    "T1-STEE-002-ef": {
+      "kind": "opaque",
+      "kind_tag": "supplier_emission_anchor",
+      "locator": {
+        "factor_source": "synthetic-EF-v1.0/steel-basic-oxygen",
+        "tier": 1,
+        "vendor_id": "T1-STEE-002"
+      },
+      "source_cid": "sha256:f489cc22ed68dddbeb24fe65d3c00073fad47bb57cc2e49753b77a1c295cae46"
+    },
+    "T2-CAST-001-ef": {
+      "kind": "opaque",
+      "kind_tag": "supplier_emission_anchor",
+      "locator": {
+        "factor_source": "synthetic-EF-v1.0/electricity-grid-avg",
+        "tier": 2,
+        "vendor_id": "T2-CAST-001"
+      },
+      "source_cid": "sha256:f489cc22ed68dddbeb24fe65d3c00073fad47bb57cc2e49753b77a1c295cae46"
+    },
+    "T2-PACK-002-ef": {
+      "kind": "opaque",
+      "kind_tag": "supplier_emission_anchor",
+      "locator": {
+        "factor_source": "synthetic-EF-v1.0/cardboard-recycled",
+        "tier": 2,
+        "vendor_id": "T2-PACK-002"
+      },
+      "source_cid": "sha256:f489cc22ed68dddbeb24fe65d3c00073fad47bb57cc2e49753b77a1c295cae46"
+    },
+    "T3-ASMB-001-ef": {
+      "kind": "opaque",
+      "kind_tag": "supplier_emission_anchor",
+      "locator": {
+        "factor_source": "synthetic-EF-v1.0/electricity-coal-heavy",
+        "tier": 3,
+        "vendor_id": "T3-ASMB-001"
+      },
+      "source_cid": "sha256:f489cc22ed68dddbeb24fe65d3c00073fad47bb57cc2e49753b77a1c295cae46"
+    },
+    "T3-LOGX-002-ef": {
+      "kind": "opaque",
+      "kind_tag": "supplier_emission_anchor",
+      "locator": {
+        "factor_source": "synthetic-EF-v1.0/road-freight-diesel",
+        "tier": 3,
+        "vendor_id": "T3-LOGX-002"
+      },
+      "source_cid": "sha256:f489cc22ed68dddbeb24fe65d3c00073fad47bb57cc2e49753b77a1c295cae46"
+    },
+    "T4-AIRX-001-ef": {
+      "kind": "opaque",
+      "kind_tag": "supplier_emission_anchor",
+      "locator": {
+        "factor_source": "synthetic-EF-v1.0/air-freight-long-haul",
+        "tier": 4,
+        "vendor_id": "T4-AIRX-001"
+      },
+      "source_cid": "sha256:f489cc22ed68dddbeb24fe65d3c00073fad47bb57cc2e49753b77a1c295cae46"
+    },
+    "T4-SHIP-002-ef": {
+      "kind": "opaque",
+      "kind_tag": "supplier_emission_anchor",
+      "locator": {
+        "factor_source": "synthetic-EF-v1.0/sea-freight-container",
+        "tier": 4,
+        "vendor_id": "T4-SHIP-002"
+      },
+      "source_cid": "sha256:f489cc22ed68dddbeb24fe65d3c00073fad47bb57cc2e49753b77a1c295cae46"
+    }
+  },
+  "outputs": [
+    {
+      "conforms_to": "spec/climate.spec.json",
+      "output_id": "climate_total_scope3",
+      "type": "climate_total_scope3"
+    },
+    {
+      "conforms_to": "spec/climate_emission.spec.json",
+      "output_id": "climate_attribution_by_vendor",
+      "type": "climate_attribution"
+    }
+  ],
+  "payload": {},
+  "schema_version": "vcp-v1.1-canary4",
+  "spec_files": {
+    "climate.spec.json": "c9bc95da6e59342f5f6c2019fdda3166019319ecb2a56828caff124122ec5d4d",
+    "climate_emission.spec.json": "b792396f3557e4998c4baf5d3dceb878db38b369fab15994b0c04729e3b32284"
+  },
+  "typed_checks": [
+    "file_integrity_many_small"
+  ]
+}

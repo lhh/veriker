@@ -1,0 +1,52 @@
+{
+  "dirichlet": [
+    {
+      "dof": "x",
+      "node": 0,
+      "value": 0.0
+    },
+    {
+      "dof": "y",
+      "node": 0,
+      "value": 0.0
+    },
+    {
+      "dof": "x",
+      "node": 6,
+      "value": 0.0
+    },
+    {
+      "dof": "y",
+      "node": 6,
+      "value": 0.0
+    },
+    {
+      "dof": "x",
+      "node": 12,
+      "value": 0.0
+    },
+    {
+      "dof": "y",
+      "node": 12,
+      "value": 0.0
+    }
+  ],
+  "neumann": [
+    {
+      "dof": "y",
+      "node": 5,
+      "value": -85.0
+    },
+    {
+      "dof": "y",
+      "node": 11,
+      "value": -85.0
+    },
+    {
+      "dof": "y",
+      "node": 17,
+      "value": -85.0
+    }
+  ],
+  "schema": "fea-bcs-v1"
+}

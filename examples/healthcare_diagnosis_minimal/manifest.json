@@ -1,0 +1,120 @@
+{
+  "bundle_id": "healthcare-diagnosis-minimal-rc",
+  "created_at": "2026-05-17T00:00:00Z",
+  "cross_refs": {},
+  "files": {
+    "HealthcareDiagnosisReDerivationCheck.py": "34734e974de572f9fb215b3b941681666503b3bfe7bab445067c8030b117111a",
+    "README.md": "103bcbcac60a21f4d0c878b5eaea291e88fc3de8b4d8ac0d059c34c8dfdbb1fb",
+    "_build_bundle.py": "058d1829a3dc74432815694398c01478eece684efcfd221239f9eb2f1510b856",
+    "confidence_coverage_check.py": "535aab9c6beac864ef7bf3e18092956f2f0ff49014a6e661b07aa61b8cf84318",
+    "healthcare_diagnosis_confidence_recompute.py": "ab849c02531ec60c90d158cca2ef1765214ed6fd821da2a7b03a884066598ced",
+    "healthcare_diagnosis_recompute.py": "84c16e2ef89f3385b811baebcf00d98708fe5b0b5c631b90a3b2819445d8e873",
+    "inputs/rules.json": "3ae76f5f73aa746b1fd400b6ef3dbce79a939aef0f86c480061d0f3625078539",
+    "inputs/symptoms.json": "b24d7c5fa348ee5aa72c643571f9838eee47a62da7761707927c1278f3dfbb3c",
+    "payload/diagnosis.json": "fbcf17d40297563ed0c66ab7446d356ea61e33a647eeb7d92e396e6fc2c06c90",
+    "pilot.json": "1ea826067a69feaadc4848c044de1b5e00d175e83330645e4fb06b86425a6d8a",
+    "re_derive/healthcare_diagnosis_pack.py": "c9baa87fb5975fa8511222810cd5913b2997c292a7336b61040494a83b446684",
+    "spec_pinned/healthcare_diagnosis.spec.json": "d75ba4029c3c2d250a9ec438be8527070d9d4cf790476e4f6d4c39403dba6b11",
+    "spec_pinned_check.py": "8b93b418d861e55f49d3d1ca27007cadd6479ad21d4e3daf8cc5488f7b89536e",
+    "verify.py": "427e79788296afd016ec92600fa21bfd6fb1b4e82d9dfe28dbde64b79ed0eb82"
+  },
+  "fragment_anchors": {
+    "rule-A49-sym-002-A49.9": {
+      "kind": "opaque",
+      "kind_tag": "icd10_evidence_anchor",
+      "locator": {
+        "icd10_code": "A49.9",
+        "rule_id": "rule-A49",
+        "symptom_id": "sym-002"
+      },
+      "source_cid": "sha256:3ae76f5f73aa746b1fd400b6ef3dbce79a939aef0f86c480061d0f3625078539"
+    },
+    "rule-A49-sym-005-A49.9": {
+      "kind": "opaque",
+      "kind_tag": "icd10_evidence_anchor",
+      "locator": {
+        "icd10_code": "A49.9",
+        "rule_id": "rule-A49",
+        "symptom_id": "sym-005"
+      },
+      "source_cid": "sha256:3ae76f5f73aa746b1fd400b6ef3dbce79a939aef0f86c480061d0f3625078539"
+    },
+    "rule-I20-sym-003-I20.9": {
+      "kind": "opaque",
+      "kind_tag": "icd10_evidence_anchor",
+      "locator": {
+        "icd10_code": "I20.9",
+        "rule_id": "rule-I20",
+        "symptom_id": "sym-003"
+      },
+      "source_cid": "sha256:3ae76f5f73aa746b1fd400b6ef3dbce79a939aef0f86c480061d0f3625078539"
+    },
+    "rule-I20-sym-005-I20.9": {
+      "kind": "opaque",
+      "kind_tag": "icd10_evidence_anchor",
+      "locator": {
+        "icd10_code": "I20.9",
+        "rule_id": "rule-I20",
+        "symptom_id": "sym-005"
+      },
+      "source_cid": "sha256:3ae76f5f73aa746b1fd400b6ef3dbce79a939aef0f86c480061d0f3625078539"
+    },
+    "rule-J18-sym-001-J18.9": {
+      "kind": "opaque",
+      "kind_tag": "icd10_evidence_anchor",
+      "locator": {
+        "icd10_code": "J18.9",
+        "rule_id": "rule-J18",
+        "symptom_id": "sym-001"
+      },
+      "source_cid": "sha256:3ae76f5f73aa746b1fd400b6ef3dbce79a939aef0f86c480061d0f3625078539"
+    },
+    "rule-J18-sym-002-J18.9": {
+      "kind": "opaque",
+      "kind_tag": "icd10_evidence_anchor",
+      "locator": {
+        "icd10_code": "J18.9",
+        "rule_id": "rule-J18",
+        "symptom_id": "sym-002"
+      },
+      "source_cid": "sha256:3ae76f5f73aa746b1fd400b6ef3dbce79a939aef0f86c480061d0f3625078539"
+    },
+    "rule-J18-sym-005-J18.9": {
+      "kind": "opaque",
+      "kind_tag": "icd10_evidence_anchor",
+      "locator": {
+        "icd10_code": "J18.9",
+        "rule_id": "rule-J18",
+        "symptom_id": "sym-005"
+      },
+      "source_cid": "sha256:3ae76f5f73aa746b1fd400b6ef3dbce79a939aef0f86c480061d0f3625078539"
+    },
+    "rule-R51-sym-004-R51.9": {
+      "kind": "opaque",
+      "kind_tag": "icd10_evidence_anchor",
+      "locator": {
+        "icd10_code": "R51.9",
+        "rule_id": "rule-R51",
+        "symptom_id": "sym-004"
+      },
+      "source_cid": "sha256:3ae76f5f73aa746b1fd400b6ef3dbce79a939aef0f86c480061d0f3625078539"
+    },
+    "rule-R51-sym-005-R51.9": {
+      "kind": "opaque",
+      "kind_tag": "icd10_evidence_anchor",
+      "locator": {
+        "icd10_code": "R51.9",
+        "rule_id": "rule-R51",
+        "symptom_id": "sym-005"
+      },
+      "source_cid": "sha256:3ae76f5f73aa746b1fd400b6ef3dbce79a939aef0f86c480061d0f3625078539"
+    }
+  },
+  "payload": {},
+  "schema_version": "vcp-v1.1-canary4",
+  "spec_files": {},
+  "typed_checks": [
+    "file_integrity_many_small",
+    "re_derivation_invocation"
+  ]
+}

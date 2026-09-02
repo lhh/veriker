@@ -1,0 +1,93 @@
+{
+  "signatures": [
+    {
+      "keyid": "2aee5290038ca17326fd9d0783fea7f425572c0a6d8a9c683306649ab07a1c9a",
+      "sig": ""
+    },
+    {
+      "keyid": "0696e213616cc4de8d95faecb04fb7cb5e7103b5943fdebdf92837a6a2769476",
+      "sig": ""
+    },
+    {
+      "keyid": "b254c93363b4305bd3be7cdcb75d774f6aa3d2795db13f5d225074df1acce42b",
+      "sig": ""
+    }
+  ],
+  "signed": {
+    "_type": "root",
+    "bootstrap_note": "Bootstrap root.json \u2014 software-generated ed25519 keypairs. Production v0.3.0-rc1 ceremony regenerates with hardware-rooted keys (YubiKey FIDO2 + cloud KMS + cold-storage) per audit_bundle/extensions/_tuf_root/README.md.",
+    "consistent_snapshot": true,
+    "expires": "2026-11-16T17:02:32.325121Z",
+    "keys": {
+      "0696e213616cc4de8d95faecb04fb7cb5e7103b5943fdebdf92837a6a2769476": {
+        "keyid_hash_algorithms": [
+          "sha256",
+          "sha512"
+        ],
+        "keytype": "ed25519",
+        "keyval": {
+          "public": "0134700fb19f25457ae81838e7676c716b16a941c8fa0c6cfa140406424c5de5"
+        },
+        "scheme": "ed25519"
+      },
+      "2aee5290038ca17326fd9d0783fea7f425572c0a6d8a9c683306649ab07a1c9a": {
+        "keyid_hash_algorithms": [
+          "sha256",
+          "sha512"
+        ],
+        "keytype": "ed25519",
+        "keyval": {
+          "public": "7211bb973b27d82374067999b101cfbb8b2e971072d5874633d333c5dae5ea16"
+        },
+        "scheme": "ed25519"
+      },
+      "b254c93363b4305bd3be7cdcb75d774f6aa3d2795db13f5d225074df1acce42b": {
+        "keyid_hash_algorithms": [
+          "sha256",
+          "sha512"
+        ],
+        "keytype": "ed25519",
+        "keyval": {
+          "public": "4dfbf81732eb15fdef78cedb35100b0bca2107592cfc89cd9482bdb52f07827b"
+        },
+        "scheme": "ed25519"
+      }
+    },
+    "roles": {
+      "root": {
+        "keyids": [
+          "2aee5290038ca17326fd9d0783fea7f425572c0a6d8a9c683306649ab07a1c9a",
+          "0696e213616cc4de8d95faecb04fb7cb5e7103b5943fdebdf92837a6a2769476",
+          "b254c93363b4305bd3be7cdcb75d774f6aa3d2795db13f5d225074df1acce42b"
+        ],
+        "threshold": 2
+      },
+      "snapshot": {
+        "keyids": [
+          "2aee5290038ca17326fd9d0783fea7f425572c0a6d8a9c683306649ab07a1c9a",
+          "0696e213616cc4de8d95faecb04fb7cb5e7103b5943fdebdf92837a6a2769476",
+          "b254c93363b4305bd3be7cdcb75d774f6aa3d2795db13f5d225074df1acce42b"
+        ],
+        "threshold": 1
+      },
+      "targets": {
+        "keyids": [
+          "2aee5290038ca17326fd9d0783fea7f425572c0a6d8a9c683306649ab07a1c9a",
+          "0696e213616cc4de8d95faecb04fb7cb5e7103b5943fdebdf92837a6a2769476",
+          "b254c93363b4305bd3be7cdcb75d774f6aa3d2795db13f5d225074df1acce42b"
+        ],
+        "threshold": 1
+      },
+      "timestamp": {
+        "keyids": [
+          "2aee5290038ca17326fd9d0783fea7f425572c0a6d8a9c683306649ab07a1c9a",
+          "0696e213616cc4de8d95faecb04fb7cb5e7103b5943fdebdf92837a6a2769476",
+          "b254c93363b4305bd3be7cdcb75d774f6aa3d2795db13f5d225074df1acce42b"
+        ],
+        "threshold": 1
+      }
+    },
+    "spec_version": "1.0.31",
+    "version": 1
+  }
+}

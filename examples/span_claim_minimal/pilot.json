@@ -1,0 +1,37 @@
+{
+  "schema": "pilot.v1",
+  "pilot": "span_claim_minimal",
+  "title": "span_claim_minimal — is this quotation really in that document?",
+  "domain": "extractive_quotation",
+  "expected_verdict": "PASS",
+  "bundle_count": 1,
+  "has_top_level_manifest": false,
+  "has_build_script": true,
+  "schema_versions": [
+    "vcp-v1.1-canary4"
+  ],
+  "typed_checks": [
+    "file_integrity_many_small"
+  ],
+  "attack_classes_covered": [
+    "span_claim:hallucinated_quotation",
+    "span_claim:source_rewritten_to_match_the_hallucination",
+    "span_claim:decoy_document_with_the_pointer_repointed",
+    "span_claim:source_cid_path_traversal",
+    "span_claim:fragment_id_out_of_range",
+    "spec_pinned:anchor_inside_bundle"
+  ],
+  "scope_limits_demonstrated": [
+    "spectra_v1 drops case and ALL punctuation, so a quotation that removes the commas — changing a non-restrictive clause into a restrictive one — passes clean",
+    "the content-addressed corpus filename is a convention of this pilot, not something the verifier checks"
+  ],
+  "spec_pinned_dispatch": {
+    "output_id": "quoted_span",
+    "type": "extracted_span",
+    "conforms_to": "spec/span_claim.spec.json",
+    "comparator_kind": "text_normalized",
+    "binding_spec": "spec_pinned/span_claim.spec.json",
+    "demo": "examples/span_claim_minimal/verify.py"
+  },
+  "last_verified": null
+}

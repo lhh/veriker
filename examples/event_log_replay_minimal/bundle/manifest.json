@@ -1,0 +1,25 @@
+{
+  "bundle_id": "event-log-replay-minimal-0001",
+  "created_at": "2026-08-29T00:00:00Z",
+  "cross_refs": {},
+  "files": {
+    "inputs/service_log.jsonl": "6844a0885d7bb1d8101bd6b13721b37f84e6971da605f6275a00e2b9885b016f",
+    "outputs/service_record_digest.json": "a2f98c71af0552d4beadc8dd0626383bb8e44374ad5e6c3d1fc761a8c26ff2fa",
+    "payload/reconstructed_record.json": "11d5dd21f091e2b1a20b744c4601969b129e033372e2b7ff1a909d0cbc3a5805"
+  },
+  "outputs": [
+    {
+      "conforms_to": "spec/event_log_replay.spec.json",
+      "output_id": "service_record_digest",
+      "type": "maintenance_record_digest"
+    }
+  ],
+  "payload": {},
+  "schema_version": "vcp-v1.1-canary4",
+  "spec_files": {
+    "event_log_replay.spec.json": "52656da7c72f56e9ee1084d95337d52d5db72d46741409e3d14318e7b231d060"
+  },
+  "typed_checks": [
+    "file_integrity_many_small"
+  ]
+}

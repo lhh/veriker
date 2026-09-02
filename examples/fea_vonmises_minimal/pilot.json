@@ -1,0 +1,33 @@
+{
+  "schema": "pilot.v1",
+  "pilot": "fea_vonmises_minimal",
+  "title": "fea_vonmises_minimal — re-run the pinned solve, and pin what it reads",
+  "domain": "structural_analysis",
+  "expected_verdict": "PASS",
+  "bundle_count": 1,
+  "has_top_level_manifest": false,
+  "has_build_script": true,
+  "schema_versions": [
+    "vcp-v1.1-canary4"
+  ],
+  "typed_checks": [
+    "file_integrity_many_small"
+  ],
+  "attack_classes_covered": [
+    "fea_vonmises:tampered_claim",
+    "fea_vonmises:claim_perturbed_just_past_epsilon",
+    "fea_vonmises:substituted_load_case_pinned",
+    "fea_vonmises:tampered_committed_input",
+    "fea_vonmises:producer_loosened_solver_tolerance",
+    "spec_pinned:anchor_inside_bundle"
+  ],
+  "spec_pinned_dispatch": {
+    "output_id": "fea_sigma_vm_max",
+    "type": "fea_vonmises_sigma_vm_max",
+    "conforms_to": "spec/fea_vonmises.spec.json",
+    "comparator_kind": "scalar_epsilon",
+    "binding_spec": "spec_pinned/fea_vonmises.spec.json",
+    "demo": "examples/fea_vonmises_minimal/verify.py"
+  },
+  "last_verified": null
+}

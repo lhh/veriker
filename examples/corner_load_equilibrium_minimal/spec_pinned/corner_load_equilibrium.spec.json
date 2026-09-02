@@ -1,0 +1,33 @@
+{
+  "spec_id": "corner_load.equilibrium.v1",
+  "description": "Auditor binding spec for per-corner vertical load claims. Binds each of the three rigid-body equilibrium residual channels to the auditor's certificate primitive and the rational_band comparator. Epsilon is the auditor's declared tolerance for physical inconsistency in a published load set, in newtons (vertical) and newton-metres (pitch, roll); it is authority-pinned here and is NOT readable or writable from the bundle. A producer who loosens its own tolerance changes nothing.",
+  "types": {
+    "corner_load_vertical_residual": {
+      "primitive_id": "corner_load_vertical_residual_recompute",
+      "comparator": {
+        "kind": "rational_band",
+        "params": {
+          "epsilon": 40.0
+        }
+      }
+    },
+    "corner_load_pitch_residual": {
+      "primitive_id": "corner_load_pitch_residual_recompute",
+      "comparator": {
+        "kind": "rational_band",
+        "params": {
+          "epsilon": 60.0
+        }
+      }
+    },
+    "corner_load_roll_residual": {
+      "primitive_id": "corner_load_roll_residual_recompute",
+      "comparator": {
+        "kind": "rational_band",
+        "params": {
+          "epsilon": 60.0
+        }
+      }
+    }
+  }
+}

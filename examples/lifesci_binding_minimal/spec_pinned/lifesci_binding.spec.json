@@ -1,0 +1,15 @@
+{
+  "spec_id": "lifesci_binding.v1",
+  "description": "Auditor binding spec for the drug-binding affinity re-derivation (Axis-2 spec-pinned dispatch). The representative re-derived output is the scalar binding-affinity prediction (payload/binding_prediction.json::affinity_pred), computed by stable crc32 character-bucket feature hashing (32 buckets) over the committed SMILES string and target sequence, dot-producted against the committed w_compound[32] / w_target[32] weights, plus bias. The hashing + scoring rule lives in the verifier primitive (lifesci_binding_recompute), which re-derives the EXACT rational value (int dot products + Fraction(bias), unrounded) — comparator kind rational_band, epsilon=1e-6. w_compound/w_target are committed as ints by design and the feature counts are int bucket counts, so both dot products are exact integers; bias=2.5 is exactly representable in binary64, so the exact value is always integer + 2.5 (on the 0.5 grid, at most 1dp) and the producer's terminal round(·, 6) is a NO-OP on the exact value. Epsilon=1e-6 therefore covers only producer-side float representation noise (effectively zero here), not any rounding information loss. The comparator and tolerance are pinned HERE by the auditor, not producer-asserted. A producer who ships a weaker spec gets a SHA the anchor does not list, so dispatch fails closed.",
+  "types": {
+    "lifesci_binding_affinity": {
+      "primitive_id": "lifesci_binding_recompute",
+      "comparator": {
+        "kind": "rational_band",
+        "params": {
+          "epsilon": 1e-6
+        }
+      }
+    }
+  }
+}

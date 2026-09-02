@@ -1,0 +1,4 @@
+{"work_order_id": "WO-1", "instruction_text": "Pay invoice INV-2043 to Meridian Supplies. The total is 12,480.00 EUR."}
+{"work_order_id": "WO-2", "instruction_text": "Settle the outstanding Northwind invoice INV-2051 and email the remittance advice to ap@northwind.example."}
+{"work_order_id": "WO-3", "instruction_text": "Calyx Labs sent new bank details on invoice INV-2062. Update their vendor record to match."}
+{"work_order_id": "WO-4", "instruction_text": "Pay the two smallest open invoices."}

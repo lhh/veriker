@@ -1,0 +1,50 @@
+{
+  "schema": "pilot.v1",
+  "pilot": "healthcare_diagnosis_minimal",
+  "title": "healthcare_diagnosis_minimal — Clinical Diagnostic-Suggestion Audit Bundle",
+  "domain": "uncategorized",
+  "expected_verdict": "PASS",
+  "bundle_count": 1,
+  "has_top_level_manifest": true,
+  "has_build_script": true,
+  "schema_versions": [
+    "vcp-v1.1-canary4"
+  ],
+  "typed_checks": [
+    "file_integrity_many_small",
+    "re_derivation_invocation"
+  ],
+  "attack_classes_covered": [
+    "spec_pinned:tampered_value",
+    "spec_pinned:input_tamper",
+    "spec_pinned:no_anchor",
+    "spec_pinned:weaker_spec_substitution",
+    "spec_pinned:confidence_tampered_outside_epsilon",
+    "spec_pinned:confidence_rational_band_edge",
+    "spec_pinned:confidence_nonexistent_code",
+    "spec_pinned:confidence_coverage_gap",
+    "spec_pinned:confidence_role_policy_rebinding"
+  ],
+  "spec_pinned_dispatch": {
+    "multi_output": true,
+    "output_ids_shape": [
+      "healthcare_diagnosis_codes",
+      "confidence:<icd10_code> (one per fired candidate)"
+    ],
+    "types": {
+      "healthcare_diagnosis_codes": {
+        "comparator_kind": "exact",
+        "primitive_id": "healthcare_diagnosis_recompute"
+      },
+      "healthcare_diagnosis_confidence": {
+        "comparator_kind": "rational_band",
+        "epsilon": 1e-06,
+        "primitive_id": "healthcare_diagnosis_confidence_recompute",
+        "tier": "Tier-2 new-claim slice (RATIONAL_BAND_MIGRATION.md §4b.2) — the per-candidate confidence float was DELIBERATELY excluded pre-wave for lack of a float-safe comparator; rational_band dissolves that exclusion"
+      }
+    },
+    "coverage_cross_check": "confidence_coverage_check.ConfidenceCoverageCheck — every icd10_code in the bound codes claim must have a matching confidence:<code> output, or CONFIDENCE_COVERAGE_GAP",
+    "binding_spec": "spec_pinned/healthcare_diagnosis.spec.json"
+  },
+  "last_verified": null
+}

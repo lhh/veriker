@@ -1,0 +1,22 @@
+{
+  "description": "Auditor binding spec for fea_vonmises_minimal. The representative re-derived output is the scalar sigma_vm_max: re-assemble the global CST plane-stress stiffness from inputs/{mesh,material,bcs}.json, re-run the committed conjugate-gradient solve with the tol/max_iter in spec/solver_config.json, and recover the maximum von-Mises stress. The ACCEPTANCE epsilon is authority-pinned HERE, never read from the producer's solver_config (Path-beta). Every file the recompute CONSUMES is pinned by SHA in pinned_inputs (section 4a.7) \u2014 including spec/solver_config.json, because the producer writes that file and the verifier takes its own stopping tolerance from it. MEASURED CAVEAT on that last point, recorded rather than assumed: on this committed problem loosening tol does not in fact slip past the comparator (the two implementations diverge under early stopping by far more than the band), so the parameter pin is defence in depth here and the pin on inputs/bcs.json is the one demonstrably doing work. WHY A TOLERANCE AT ALL, and why THIS one. The producer runs its own implementation of the same pinned algorithm. The two are not bit-identical and the reason is exact and singular: the verifier's matrix-vector product is a builtin sum() over a generator, which on CPython 3.12 applies compensated (Neumaier) summation, while the producer accumulates in an explicit loop, which does not. From conjugate-gradient iteration 2 onward 8 of the 36 rows differ in the last bits, and the difference reaches sigma_vm_max as 1.4e-12 (measured, CPython 3.12.3). Because that compensation is an interpreter implementation detail rather than a property of IEEE-754, an `exact` comparator would bind the claim to one interpreter; epsilon=1e-9 is roughly 700x the measured difference and still about five orders below any physically meaningful change in the stress. NUMERIC MODEL (numeric_model=binary64_exact): every operation is IEEE-754 double plus math.sqrt, which is correctly rounded and therefore bit-identical across platforms; no libm transcendental is involved, so the residual difference is a summation-rounding artifact of the same arithmetic and NOT a margin for a different method.",
+  "spec_id": "fea.vonmises.minimal.v1",
+  "types": {
+    "fea_vonmises_sigma_vm_max": {
+      "comparator": {
+        "kind": "scalar_epsilon",
+        "params": {
+          "epsilon": 1e-09,
+          "numeric_model": "binary64_exact"
+        }
+      },
+      "pinned_inputs": {
+        "inputs/bcs.json": "4eba2ee92a213ab9caac10c706bb982c4a23a5362b8b75acd8547d68db038147",
+        "inputs/material.json": "1366d42ae2c295147a4b6f51f5c496667473ea90a251f99b3acd082f81ca5b69",
+        "inputs/mesh.json": "68a3f61cd06ef7633c5c979e6bc4ce7295a0e3855e096231a0afb0b0f50dd1ec",
+        "spec/solver_config.json": "2c9e265a0e04bbdd946394d554c2ee421b3c9a227e45b2d2b05d04471cc03247"
+      },
+      "primitive_id": "fea_vonmises_recompute"
+    }
+  }
+}

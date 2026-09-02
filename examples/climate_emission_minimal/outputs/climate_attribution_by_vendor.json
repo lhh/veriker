@@ -1,0 +1,76 @@
+{
+  "value": [
+    {
+      "vendor_id": "T1-ALUM-001",
+      "tier": 1,
+      "activity_amount": 4200.0,
+      "activity_unit": "kg_aluminium",
+      "emission_factor_kg_co2e_per_unit": 8.24,
+      "factor_source": "synthetic-EF-v1.0/aluminium-primary",
+      "attributed_kg_co2e": 34608.0
+    },
+    {
+      "vendor_id": "T1-STEE-002",
+      "tier": 1,
+      "activity_amount": 7800.0,
+      "activity_unit": "kg_steel",
+      "emission_factor_kg_co2e_per_unit": 1.89,
+      "factor_source": "synthetic-EF-v1.0/steel-basic-oxygen",
+      "attributed_kg_co2e": 14742.0
+    },
+    {
+      "vendor_id": "T2-CAST-001",
+      "tier": 2,
+      "activity_amount": 320.0,
+      "activity_unit": "kwh_electricity",
+      "emission_factor_kg_co2e_per_unit": 0.233,
+      "factor_source": "synthetic-EF-v1.0/electricity-grid-avg",
+      "attributed_kg_co2e": 74.56
+    },
+    {
+      "vendor_id": "T2-PACK-002",
+      "tier": 2,
+      "activity_amount": 1500.0,
+      "activity_unit": "kg_cardboard",
+      "emission_factor_kg_co2e_per_unit": 0.72,
+      "factor_source": "synthetic-EF-v1.0/cardboard-recycled",
+      "attributed_kg_co2e": 1080.0
+    },
+    {
+      "vendor_id": "T3-ASMB-001",
+      "tier": 3,
+      "activity_amount": 980.0,
+      "activity_unit": "kwh_electricity",
+      "emission_factor_kg_co2e_per_unit": 0.411,
+      "factor_source": "synthetic-EF-v1.0/electricity-coal-heavy",
+      "attributed_kg_co2e": 402.78
+    },
+    {
+      "vendor_id": "T3-LOGX-002",
+      "tier": 3,
+      "activity_amount": 12000.0,
+      "activity_unit": "tonne_km",
+      "emission_factor_kg_co2e_per_unit": 0.096,
+      "factor_source": "synthetic-EF-v1.0/road-freight-diesel",
+      "attributed_kg_co2e": 1152.0
+    },
+    {
+      "vendor_id": "T4-AIRX-001",
+      "tier": 4,
+      "activity_amount": 550.0,
+      "activity_unit": "tonne_km",
+      "emission_factor_kg_co2e_per_unit": 0.602,
+      "factor_source": "synthetic-EF-v1.0/air-freight-long-haul",
+      "attributed_kg_co2e": 331.1
+    },
+    {
+      "vendor_id": "T4-SHIP-002",
+      "tier": 4,
+      "activity_amount": 45000.0,
+      "activity_unit": "tonne_km",
+      "emission_factor_kg_co2e_per_unit": 0.012,
+      "factor_source": "synthetic-EF-v1.0/sea-freight-container",
+      "attributed_kg_co2e": 540.0
+    }
+  ]
+}

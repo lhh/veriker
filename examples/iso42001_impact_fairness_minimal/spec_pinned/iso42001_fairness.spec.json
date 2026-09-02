@@ -1,0 +1,10 @@
+{
+  "spec_id": "iso42001.impact.fairness.v1",
+  "description": "Auditor binding spec for ISO/IEC 42001 A.5 (Assessing Impacts of AI Systems) disparate-impact metric re-derivation. Binds output type 'disparate_impact_ratio' to the verifier-side primitive 'iso42001_disparate_impact_recompute' (EEOC four-fifths min-rate/max-rate) under rational_band (epsilon=1e-9). The verifier re-derives the EXACT rational ratio (per-group Fraction(favorable, total), then min/max of those Fractions — int arithmetic only, zero float ambiguity on the accept path), while the producer commits the UNROUNDED float min_rate/max_rate. Epsilon=1e-9 covers only the producer's float division (the ratio lies in (0, 1], and binary64 ulp at that magnitude is ~2.2e-16 — 1e-9 is a generous fixed bound on an unrounded claim, not a rounding-quantization grain); it covers NOTHING on the recompute side, which is exact. The metric method and tolerance are AUTHORITY-PINNED here, not producer-asserted: a producer cannot swap a more flattering fairness definition or widen the tolerance without changing this spec's SHA, which the auditor's anchor rejects. Re-derivability of the disclosed figure only — NOT a judgement that the metric is the right fairness measure, and NOT A.5 control conformance.",
+  "types": {
+    "disparate_impact_ratio": {
+      "primitive_id": "iso42001_disparate_impact_recompute",
+      "comparator": {"kind": "rational_band", "params": {"epsilon": 1e-9}}
+    }
+  }
+}

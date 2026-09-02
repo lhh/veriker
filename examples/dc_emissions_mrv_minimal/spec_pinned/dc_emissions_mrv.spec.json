@@ -1,0 +1,15 @@
+{
+  "spec_id": "dc_emissions_mrv.v1",
+  "description": "Auditor binding spec for the data-center NSR embodied-carbon re-derivation (Axis-2 spec-pinned dispatch). The representative re-derived output is the scalar total embodied carbon (kg CO2e). Comparator is rational_band with epsilon=1e-6. (a) The per-material round(quantity * emission_factor_kg_co2e_per_unit, 6) is an INFORMATION-BEARING intermediate rounding step, not cosmetic noise — the exact recompute reproduces it EXACTLY in rational arithmetic: for each material it takes the exact product Fraction(float(quantity)) * Fraction(float(emission_factor)) and rounds that exact rational to the nearest multiple of 10^-6 using round-half-even (matching Python float `round`'s banker's rounding), then sums those 6dp-grid rationals exactly, with no float anywhere on the recompute path; the producer's terminal round(total, 6) is a no-op on this exact side (a sum of 6dp-grid rationals is already on the 6dp grid) and is not separately reproduced. (b) Epsilon=1e-6 covers the producer's float pipeline noise, including the terminal round(total, 6) call and the float multiplication/addition rounding entering it — not the per-material round, which is reproduced exactly. (c) RESIDUAL (false-RED direction, fail-closed): when a single material's exact product lies within float-multiplication error (~1e-16 relative) of a 5e-7 rounding-boundary (a half-grain tie or near-tie of the per-material 6dp round), the producer's float round(q*ef, 6) and this primitive's exact round-half-even can differ by one 1e-6 grain on that material, producing a claim up to ~1e-6 off the exact sum; this single-grain slip is absorbed by epsilon. Simultaneous boundary slips on more than one material in the same aggregate are NOT covered by this bound (their grains could compound past epsilon) — a rare honest-producer false-RED, not a fail-open direction. The aggregation rule lives in the verifier primitive (dc_emissions_mrv_embodied_recompute); the comparator and tolerance are pinned HERE by the auditor, not producer-asserted. A producer who ships a weaker spec gets a SHA the anchor does not list, so dispatch fails closed.",
+  "types": {
+    "dc_embodied_carbon_total": {
+      "primitive_id": "dc_emissions_mrv_embodied_recompute",
+      "comparator": {
+        "kind": "rational_band",
+        "params": {
+          "epsilon": 1e-06
+        }
+      }
+    }
+  }
+}

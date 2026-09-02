@@ -1,0 +1,54 @@
+{
+  "description": "Auditor binding spec for witness_cert_minimal. The WHOLE acceptance criterion is authority-pinned here and none of it is producer-asserted: epsilon (the claim band around the witness-implied quantity), equilibrium_tol (free-DOF residual of the ORIGINAL K), input_anchor (sha256 of the canonical committed inputs \u2014 the auditor pins the PROBLEM, so an honest witness for a substituted lighter load case is refused), and conditioning_bound (the verifier re-derives the exact certified interval eps+delta and REFUSES a committed interval below it). The witness is deliberately NOT anchored: it is the producer's asserted solution, and the certificate's job is to check it, not to trust it. The verifier never runs a solver, so any solver that satisfies equilibrium is accepted.",
+  "spec_id": "witness.cert.v1",
+  "types": {
+    "witness_cert_sigma_vm_max": {
+      "comparator": {
+        "kind": "rational_sqrt_band",
+        "params": {
+          "conditioning_bound": true,
+          "epsilon": 1e-06,
+          "equilibrium_tol": 1e-06,
+          "input_anchor": {
+            "bcs": "077d4fc83b65553c04ba3e082cab96205f522b4fa29e145aeb7293873c4210ce",
+            "material": "4569dc9e967a09583b3c6f41c9a12cc295a28a821b1b01251ed79a375e5f44ef",
+            "mesh": "ebcd4d49d4a3f3890d51a101deb4e31247175b8f70e347fa6329790fadee0116"
+          }
+        }
+      },
+      "primitive_id": "fea_witness_certificate"
+    },
+    "witness_cert_u_norm_2": {
+      "comparator": {
+        "kind": "rational_sqrt_band",
+        "params": {
+          "conditioning_bound": true,
+          "epsilon": 1e-06,
+          "equilibrium_tol": 1e-06,
+          "input_anchor": {
+            "bcs": "077d4fc83b65553c04ba3e082cab96205f522b4fa29e145aeb7293873c4210ce",
+            "material": "4569dc9e967a09583b3c6f41c9a12cc295a28a821b1b01251ed79a375e5f44ef",
+            "mesh": "ebcd4d49d4a3f3890d51a101deb4e31247175b8f70e347fa6329790fadee0116"
+          }
+        }
+      },
+      "primitive_id": "fea_witness_certificate_u_norm_2"
+    },
+    "witness_cert_u_norm_inf": {
+      "comparator": {
+        "kind": "rational_band",
+        "params": {
+          "conditioning_bound": true,
+          "epsilon": 1e-06,
+          "equilibrium_tol": 1e-06,
+          "input_anchor": {
+            "bcs": "077d4fc83b65553c04ba3e082cab96205f522b4fa29e145aeb7293873c4210ce",
+            "material": "4569dc9e967a09583b3c6f41c9a12cc295a28a821b1b01251ed79a375e5f44ef",
+            "mesh": "ebcd4d49d4a3f3890d51a101deb4e31247175b8f70e347fa6329790fadee0116"
+          }
+        }
+      },
+      "primitive_id": "fea_witness_certificate_u_norm_inf"
+    }
+  }
+}

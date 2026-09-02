@@ -1,0 +1,39 @@
+{
+  "schema": "pilot.v1",
+  "pilot": "pharmacophore_fit_minimal",
+  "title": "pharmacophore_fit_minimal — Spatial-Fit RMSD Audit Bundle",
+  "domain": "uncategorized",
+  "expected_verdict": "PASS",
+  "bundle_count": 0,
+  "has_top_level_manifest": false,
+  "has_build_script": true,
+  "schema_versions": [],
+  "typed_checks": [],
+  "attack_classes_covered": [],
+  "spec_pinned_dispatch": {
+    "note": "Greenfield Tier-2 slice (RATIONAL_BAND_MIGRATION.md §4b.3), ADDITIVE to the legacy full-ledger TypedCheck above. Built to a self-contained temp bundle by spec_pinned_check.py — no committed manifest in this pilot dir declares `outputs`.",
+    "second_consumer_family_of": "rational_sqrt_band",
+    "first_consumer_family": "a partner-held FEA pilot (witness+certificate), not in the open drop",
+    "outputs": [
+      {
+        "output_id": "pharmacophore_best_fit_rmsd",
+        "type": "pharmacophore_best_fit_rmsd",
+        "primitive_id": "pharmacophore_best_fit_rmsd_recompute",
+        "comparator_kind": "rational_sqrt_band",
+        "epsilon": 1e-06
+      },
+      {
+        "output_id": "pharmacophore_best_fit_distance",
+        "type": "pharmacophore_best_fit_distance",
+        "primitive_id": "pharmacophore_best_fit_distance_recompute",
+        "comparator_kind": "rational_sqrt_band",
+        "epsilon": 1e-06
+      }
+    ],
+    "binding_spec": "spec_pinned/pharmacophore_fit.spec.json",
+    "work_set_wired": true,
+    "representative_output_choice": "best-fit (rank-1, smallest mean-squared-distance) candidate's aggregate RMSD, and that same candidate's first (sorted pharmacophore_feature_id) paired distance — stated in full in the spec description",
+    "tests": "tests/test_pharmacophore_fit_spec_pinned.py"
+  },
+  "last_verified": null
+}

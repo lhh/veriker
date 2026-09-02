@@ -1,0 +1,7 @@
+{
+  "n_dofs": 24,
+  "schema": "fea-output-norms-v1",
+  "sigma_vm_max": 436.813903772152,
+  "u_norm_2": 0.06042562686449008,
+  "u_norm_inf": 0.02890492530467116
+}

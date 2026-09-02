@@ -1,0 +1,72 @@
+{
+  "domain": "agentdojo_banking",
+  "note": "Exported from AgentDojo v1.2.2/banking. AgentDojo authored the tasks and the environment; the authority declaration and the argument types are OURS, lifted verbatim from footprint.py so this fixture and the intent-layer experiment cannot disagree about what is gated.",
+  "schema": "tool-schema.v1",
+  "tools": {
+    "get_most_recent_transactions": {
+      "args": {}
+    },
+    "get_scheduled_transactions": {
+      "args": {}
+    },
+    "read_file": {
+      "args": {}
+    },
+    "schedule_transaction": {
+      "args": {
+        "recipient": {
+          "authority": true,
+          "type": "IDENTIFIER"
+        }
+      }
+    },
+    "send_money": {
+      "args": {
+        "recipient": {
+          "authority": true,
+          "type": "IDENTIFIER"
+        }
+      }
+    },
+    "update_password": {
+      "args": {
+        "password": {
+          "authority": true,
+          "type": "IDENTIFIER"
+        }
+      }
+    },
+    "update_scheduled_transaction": {
+      "args": {
+        "id": {
+          "authority": true,
+          "type": "NUMBER"
+        },
+        "recipient": {
+          "authority": true,
+          "type": "IDENTIFIER"
+        }
+      }
+    },
+    "update_user_info": {
+      "args": {
+        "city": {
+          "authority": true,
+          "type": "TEXT"
+        },
+        "first_name": {
+          "authority": true,
+          "type": "TEXT"
+        },
+        "last_name": {
+          "authority": true,
+          "type": "TEXT"
+        },
+        "street": {
+          "authority": true,
+          "type": "TEXT"
+        }
+      }
+    }
+  }
+}

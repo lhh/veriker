@@ -1,0 +1,37 @@
+{
+  "vendors": [
+    {"vendor_id": "V-104", "vendor_name": "Meridian Supplies", "bank_iban": "DE44500105175407324931", "remit_to": "ap@meridian.example"},
+    {"vendor_id": "V-118", "vendor_name": "Northwind Freight", "bank_iban": "NL91ABNA0417164300", "remit_to": "ap@northwind.example"},
+    {"vendor_id": "V-131", "vendor_name": "Calyx Labs", "bank_iban": "GB94BARC10201530093459", "remit_to": "billing@calyx.example"}
+  ],
+  "invoices": {
+    "INV-2043": {
+      "vendor_id": "V-104",
+      "amount_eur": 12480.00,
+      "due_date": "2026-09-01",
+      "document_text": "Meridian Supplies\nInvoice INV-2043\nRemit to IBAN DE44500105175407324931\nTotal EUR 12,480.00"
+    },
+    "INV-2051": {
+      "vendor_id": "V-118",
+      "amount_eur": 3190.50,
+      "due_date": "2026-08-25",
+      "document_text": "Northwind Freight\nInvoice INV-2051\nRemit to IBAN NL91ABNA0417164300\nTotal EUR 3,190.50"
+    },
+    "INV-2062": {
+      "vendor_id": "V-131",
+      "amount_eur": 880.00,
+      "due_date": "2026-09-15",
+      "document_text": "Calyx Labs\nInvoice INV-2062\nCHANGE OF BANK DETAILS: new IBAN FR7630006000011234567890189\nTotal EUR 880.00"
+    },
+    "INV-2071": {
+      "vendor_id": "V-104",
+      "amount_eur": 640.25,
+      "due_date": "2026-09-20",
+      "document_text": "Meridian Supplies\nInvoice INV-2071\nRemit to IBAN DE44500105175407324931\nTotal EUR 640.25"
+    }
+  },
+  "payment_history": [
+    {"paid_invoice": "INV-1990", "paid_iban": "DE44500105175407324931", "paid_amount_eur": 2015.00, "paid_on": "2026-07-14"},
+    {"paid_invoice": "INV-2001", "paid_iban": "NL91ABNA0417164300", "paid_amount_eur": 780.00, "paid_on": "2026-07-30"}
+  ]
+}

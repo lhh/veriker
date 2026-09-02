@@ -1,0 +1,73 @@
+{
+  "bundle_id": "refinement-discharge-minimal-rc",
+  "created_at": "2026-05-31T00:00:00Z",
+  "cross_refs": {},
+  "dispatch_records": [
+    {
+      "effect": {},
+      "inputs": [],
+      "op": {
+        "kind": "COMPUTE",
+        "name": "edge_attribution_sum"
+      },
+      "outputs": [
+        {
+          "name": "attribution",
+          "type": {
+            "base": "Int",
+            "refine": "(= (+ e0 e1 e2) total)"
+          }
+        }
+      ],
+      "predicates": [],
+      "proof": {
+        "discharge_status": "discharged",
+        "kind": "smt-z3",
+        "obligation_sha": "67f0c4e2ecd05d43549b7bcd08a37a285642e16fa68397f682b2325919d70b7e",
+        "obligation_uri": "proofs/edge_attribution_sum.smt2",
+        "recheck_context": {
+          "__logic__": "QF_LIA",
+          "__solver_policy__": {
+            "invoker_kind": "subprocess",
+            "random_seed": 0,
+            "rlimit": 200000000,
+            "z3_version": "4.16.0"
+          },
+          "e0": 4200,
+          "e1": 3500,
+          "e2": 2300,
+          "total": 10000
+        },
+        "verifier_signature": {
+          "algorithm": "hmac-sha256",
+          "bundle_id": "refinement-discharge-minimal-rc",
+          "context_canonical_sha256": "9f33f4f52071fcfb63c799f28c9a33cc4b10b09b46a43a7066d55578cec63cf1",
+          "mac": "dae86d6c76f05bdb0675ce99049bfcefd662c3fc373488f08c45aaafd564ca38",
+          "record_idx": 0,
+          "refine_text_sha256": "692c341a763e7de738fe20df6fec0e10ac4b6b68893840f078e253f10b5bc6bb",
+          "timestamp_utc": "2026-05-31T00:00:00Z",
+          "verifier_id": "v-kernel-default",
+          "z3_status": "discharged"
+        }
+      },
+      "schema_version": "0.1",
+      "stamp_declared": "INTERNAL_BENCHMARK",
+      "stamp_observed": null
+    }
+  ],
+  "files": {
+    "payload/attribution.json": "c9126a2a047fce52c070eb048a90ef384b57e244cba7c4772da76ca5ce1a5771",
+    "proofs/edge_attribution_sum.smt2": "67f0c4e2ecd05d43549b7bcd08a37a285642e16fa68397f682b2325919d70b7e"
+  },
+  "payload": {},
+  "schema_version": "vcp-v1.1-canary4",
+  "spec_files": {
+    "allocation_table.json": "a4eae903d6955fafcd6973b7ba4aed241dfc4335040fae30aca945cf133d50b8"
+  },
+  "typed_checks": [
+    "spec_sha_pin",
+    "file_integrity_many_small",
+    "dispatch_record_wellformed",
+    "refinement_discharge"
+  ]
+}

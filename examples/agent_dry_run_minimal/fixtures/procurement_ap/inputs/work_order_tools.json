@@ -1,0 +1,7 @@
+{
+  "_note": "Rung 1, the work-order tool set. Supplied here rather than derived, so this fixture needs no LLM spend. A deployment that derives it must commit the derived set, its model id and its prompt hash into the bundle, or rung 1 is not re-derivable.",
+  "WO-1": ["get_invoice", "pay_invoice"],
+  "WO-2": ["get_invoice", "pay_invoice", "send_remittance_email"],
+  "WO-3": ["get_invoice", "update_vendor_bank_details"],
+  "WO-4": ["list_vendors", "get_invoice", "pay_invoice"]
+}

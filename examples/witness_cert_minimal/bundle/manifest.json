@@ -1,0 +1,38 @@
+{
+  "bundle_id": "witness-cert-minimal-0001",
+  "created_at": "2026-08-29T00:00:00Z",
+  "cross_refs": {},
+  "files": {
+    "inputs/bcs.json": "077d4fc83b65553c04ba3e082cab96205f522b4fa29e145aeb7293873c4210ce",
+    "inputs/material.json": "4569dc9e967a09583b3c6f41c9a12cc295a28a821b1b01251ed79a375e5f44ef",
+    "inputs/mesh.json": "ebcd4d49d4a3f3890d51a101deb4e31247175b8f70e347fa6329790fadee0116",
+    "outputs/wc_sigma_vm_max.json": "59599feb471a0a6df16964d6cd5bf41efd946fb3189ea4a6251fa8b007d3e220",
+    "outputs/wc_u_norm_2.json": "f6a929f44358f1e15d4cbd18c49a320c2bbf66be05dbe649d1b15728e0718189",
+    "outputs/wc_u_norm_inf.json": "9f5a01765e3264e88e8670a8f9e7ac5a4b6a976eea1542d5373c5d0c5d6d01e5",
+    "payload/displacement_field.json": "cb7e1d82810c90aff422c13bd61571ebff58aeaaa00afd4278ec388a9c6b4f20",
+    "payload/output_norms.json": "495bb3dc143b5c92142502695452f098dcbd3966bb4621f085bea62c7aded326"
+  },
+  "outputs": [
+    {
+      "output_id": "wc_sigma_vm_max",
+      "type": "witness_cert_sigma_vm_max"
+    },
+    {
+      "output_id": "wc_u_norm_2",
+      "type": "witness_cert_u_norm_2"
+    },
+    {
+      "output_id": "wc_u_norm_inf",
+      "type": "witness_cert_u_norm_inf"
+    }
+  ],
+  "payload": {},
+  "schema_version": "vcp-v1.1-canary4",
+  "spec_files": {
+    "solver_config.json": "0e6f0e6ce497efdeb7968cddb0fd0fd243f521f08172f2044206adebfaf048a4",
+    "witness_cert.spec.json": "13c9e560547c0a2f22fb01a94fa027b740f705fa37a6e4bf673330b8708c0b80"
+  },
+  "typed_checks": [
+    "file_integrity_many_small"
+  ]
+}

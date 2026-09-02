@@ -1,0 +1,5 @@
+Sensor array B was installed along the north span in March.
+The deck displacement recorded at midspan averaged 3.5 mm over the survey window.
+The reviewers, who had access to the raw telemetry, endorsed the contractor's figure.
+Two units reported intermittently and were excluded from the aggregate.
+No corrosion was observed at the anchorages.

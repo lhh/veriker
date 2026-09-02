@@ -1,0 +1,32 @@
+{
+  "schema": "pilot.v1",
+  "pilot": "witness_cert_minimal",
+  "title": "witness_cert_minimal — witness + certificate (the verifier never solves)",
+  "domain": "structural_analysis",
+  "expected_verdict": "PASS",
+  "bundle_count": 1,
+  "has_top_level_manifest": false,
+  "has_build_script": true,
+  "schema_versions": [
+    "vcp-v1.1-canary4"
+  ],
+  "typed_checks": [
+    "file_integrity_many_small"
+  ],
+  "attack_classes_covered": [
+    "witness_cert:tampered_claim",
+    "witness_cert:perturbed_witness_breaks_equilibrium",
+    "witness_cert:understated_certified_interval",
+    "witness_cert:substituted_load_case_anchored",
+    "spec_pinned:anchor_inside_bundle"
+  ],
+  "spec_pinned_dispatch": {
+    "output_id": "wc_sigma_vm_max",
+    "type": "witness_cert_sigma_vm_max",
+    "conforms_to": "spec/witness_cert.spec.json",
+    "comparator_kind": "rational_sqrt_band",
+    "binding_spec": "spec_pinned/witness_cert.spec.json",
+    "demo": "examples/witness_cert_minimal/verify.py"
+  },
+  "last_verified": null
+}

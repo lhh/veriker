@@ -1,0 +1,24 @@
+{
+  "spec_id": "pharmacophore_fit.spatial_fit.v1",
+  "description": "Auditor binding spec for the pharmacophore_fit_minimal Axis-2 greenfield surface (RATIONAL_BAND_MIGRATION.md §4b.3) — the SECOND consumer family of the rational_sqrt_band comparator kind (first: a partner-held FEA pilot's witness+certificate posture). Two types, two primitive_ids, both rational_sqrt_band with epsilon=1e-6 (the claims are round-6dp, matching the pilot's committed _RMSD_DECIMAL_PLACES=6; the epsilon is the quantization grain plus float-representation noise). Representative-output choice (deliberate, not exhaustive): rather than bind every per-candidate / per-pair distance as a spec-pinned claim — the legacy full-ledger TypedCheck (PharmacophoreFitReDerivationCheck, untouched by this spec) already covers that in float — this surface commits to exactly two claims computed over the BEST-FIT candidate (the candidate with the smallest exact mean-squared feature-pair distance against the pharmacophore template): 'pharmacophore_best_fit_rmsd' is that candidate's aggregate RMSD, and 'pharmacophore_best_fit_distance' is that same candidate's single paired distance for its alphabetically-first pharmacophore_feature_id. Both primitives recompute in EXACT rational arithmetic (Fraction(float) is exact for every binary64 operand) and return {kind: sqrt_of_rational, num, den} — the claimed value is the producer's rounded float (never derived from the exact path); the comparator decides |claimed - sqrt(M)| <= epsilon exactly on squares. No conditioning_bound is declared (no certified-interval reporting for this surface) — the band covers the recomputed value only.",
+  "types": {
+    "pharmacophore_best_fit_rmsd": {
+      "primitive_id": "pharmacophore_best_fit_rmsd_recompute",
+      "comparator": {
+        "kind": "rational_sqrt_band",
+        "params": {
+          "epsilon": 1e-06
+        }
+      }
+    },
+    "pharmacophore_best_fit_distance": {
+      "primitive_id": "pharmacophore_best_fit_distance_recompute",
+      "comparator": {
+        "kind": "rational_sqrt_band",
+        "params": {
+          "epsilon": 1e-06
+        }
+      }
+    }
+  }
+}

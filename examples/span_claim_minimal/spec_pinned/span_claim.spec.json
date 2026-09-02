@@ -1,0 +1,19 @@
+{
+  "description": "Auditor binding spec for span_claim_minimal, a synthetic extractive quotation. The representative re-derived output is the SOURCE fragment: read inputs/span_claim.json {source_cid, fragment_id}, load corpus/<source_cid>.txt, cut it at sentence terminators [.!?]+ that are not adjacent to a digit, strip each piece and drop the empties, and return the piece at fragment_id. The comparator is text_normalized[spectra_v1], authority-pinned here and not producer-asserted. TWO INPUTS ARE PINNED BY SHA (section 4a.7) and they answer different questions: corpus/<cid>.txt fixes WHICH DOCUMENT, because otherwise a producer can hallucinate a quotation and edit the source until the re-derivation returns it; and inputs/span_claim.json fixes WHICH SENTENCE OF IT, because the pointer is part of the auditor's question rather than the producer's answer \u2014 pinning the corpus alone leaves a producer free to ship a second document beside the pinned one and repoint source_cid at it, and the content-addressed filename does not prevent that (the primitive resolves the name it is given and never checks that the name matches the bytes). The claimed TEXT is deliberately not pinned; it is the answer. SCOPE LIMIT an adopter is accepting, stated because the comparator hides it: spectra_v1 normalizes by NFC, casefold, DROPPING ALL PUNCTUATION, collapsing whitespace and stripping. So a PASS certifies the words and their order, NOT the punctuation or the case \u2014 and a comma that changes what a sentence means can be added or removed inside a quotation this check accepts. Segmentation is the terminator regex alone: no abbreviation, quotation or list handling.",
+  "spec_id": "span.claim.minimal.v1",
+  "types": {
+    "extracted_span": {
+      "comparator": {
+        "kind": "text_normalized",
+        "params": {
+          "profile": "spectra_v1"
+        }
+      },
+      "pinned_inputs": {
+        "corpus/27200c803e93cbf0b19f784798c11b80203e15bc553c8e2895ce55ea2d115b53.txt": "27200c803e93cbf0b19f784798c11b80203e15bc553c8e2895ce55ea2d115b53",
+        "inputs/span_claim.json": "a4145b958262a1a0a84ce04cf4c1d9e1522736bccbd48b0572789453693d2312"
+      },
+      "primitive_id": "spectra_span_recompute"
+    }
+  }
+}

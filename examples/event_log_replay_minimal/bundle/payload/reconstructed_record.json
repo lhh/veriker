@@ -1,0 +1,13 @@
+{
+  "record": {
+    "asset_id": "PRESS-14",
+    "last_service": "2026-07-06",
+    "location": "bay 1",
+    "model": "hydraulic press, 40 t",
+    "restriction": "25 t ceiling pending seal replacement",
+    "seal_kit_revision": "B",
+    "service_interval_days": 180,
+    "status": "restricted_use"
+  },
+  "schema": "maintenance-record-v1"
+}

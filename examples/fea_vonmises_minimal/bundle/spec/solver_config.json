@@ -1,0 +1,7 @@
+{
+  "max_iter": 5000,
+  "preconditioner": "none",
+  "schema": "fea-solver-config-v1",
+  "solver": "cg",
+  "tol": 1e-12
+}
