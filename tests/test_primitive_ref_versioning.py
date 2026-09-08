@@ -330,10 +330,23 @@ def test_every_registered_primitive_still_resolves_bare():
         assert rec["version_status"] == "unversioned"
 
 
+# 2026-09-02: the first shipped spec to USE the grammar (finsheet_style_minimal
+# pins `@1`, a contract revision). The migration stays optional -- every other
+# spec is bare and parses unchanged -- and the versioned refs are a frozen,
+# dated set, never a widening. Mirrors VERSIONED_REFS_IN_SPECS in
+# tests/test_primitive_ref_denominator_ratchet.py (internal-only); keep both.
+VERSIONED_REFS_IN_SHIPPED_SPECS = {
+    "sheet_derivation_replay@1",
+    "sheet_query_recompute@1",
+}
+
+
 def test_every_primitive_id_in_every_shipped_spec_parses_unchanged():
     """The real fleet, not a fixture: every primitive_id string in every spec
     JSON must parse as a BARE name -- proving the migration is genuinely
-    optional and no shipped spec changes meaning."""
+    optional and no shipped spec changes meaning -- except the frozen, dated
+    set above, which use the grammar deliberately and must parse as exactly
+    (name, version, no digest)."""
     root = Path(__file__).resolve().parents[1]
     seen = set()
     for spec in sorted(root.glob("examples/*/**/*.json")):
@@ -359,10 +372,18 @@ def test_every_primitive_id_in_every_shipped_spec_parses_unchanged():
         walk(json.loads(text))
     # Non-vacuity, not a fleet-calibrated floor (see the note above).
     assert seen, "no primitive_id found in any spec JSON — this test is vacuous"
+    seen_versioned = set()
     for pid in sorted(seen):
         ref = parse_primitive_ref(pid)
-        assert ref.name == pid, f"{pid!r} must parse as a bare name"
-        assert ref.version is None and ref.digest is None
+        assert ref.digest is None, f"{pid!r}: a digest pin in a shipped spec welds it to one build"
+        if pid in VERSIONED_REFS_IN_SHIPPED_SPECS:
+            assert ref.version is not None and ref.name != pid
+            seen_versioned.add(pid)
+            continue
+        assert ref.name == pid, f"{pid!r} must parse as a bare name (or be added to the frozen versioned set)"
+        assert ref.version is None
+    stale = VERSIONED_REFS_IN_SHIPPED_SPECS - seen_versioned
+    assert not stale, f"frozen versioned refs no longer in any spec: {sorted(stale)}"
 
 
 # ---------------------------------------------------------------------------

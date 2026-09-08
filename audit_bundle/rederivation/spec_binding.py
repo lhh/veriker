@@ -38,6 +38,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..admission import admit_json_file
+from ..digest import sha256_file as _sha256_file
+from ..strict_json import strict_json_loads
 from .comparators import validate_comparator_params
 
 
@@ -268,10 +270,10 @@ class SpecAnchor:
                     f"spec-anchor path {str(raw_path)!r} could not be read: {exc}"
                 ) from exc
             try:
-                doc = json.loads(raw)
-            except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+                doc = strict_json_loads(raw)
+            except (ValueError, UnicodeDecodeError) as exc:
                 raise AnchorConstructionError(
-                    f"spec-anchor path {str(raw_path)!r} is not valid JSON: {exc}"
+                    f"spec-anchor path {str(raw_path)!r} is not strict JSON: {exc}"
                 ) from exc
             if not isinstance(doc, dict):
                 raise AnchorConstructionError(
@@ -472,10 +474,6 @@ class AnchoredSpecSet:
                 "anchor) is NOT authoritative — fail-closed."
             )
         return b
-
-
-def _sha256_file(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def build_anchored_spec_set(

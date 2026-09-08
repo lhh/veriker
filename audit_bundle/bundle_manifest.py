@@ -16,6 +16,8 @@ import stat as stat_module
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from .digest import sha256_file as _sha256_file
+from ._containment import ContainmentError, contain
 
 from .admission import InputInadmissible, iter_admitted_jsonl_tolerant
 from .fragments.fragment_id import BadFragmentID, fragment_from_dict
@@ -755,10 +757,6 @@ class BundleManifest:
 # ---------------------------------------------------------------------------
 
 
-def _sha256_file(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
 def _safe_bundle_path(bundle_dir: Path, rel_path: str) -> Path:
     """Resolve ``rel_path`` inside ``bundle_dir`` with two fail-closed checks
     that the integrity walk does NOT perform on its own:
@@ -811,59 +809,46 @@ def _safe_bundle_path(bundle_dir: Path, rel_path: str) -> Path:
         assert_fs_representable(rel_path, where="manifest path")
     except MalformedManifest as exc:
         raise UnsafeBundlePath(str(exc)) from exc
+    # The rule itself — resolve, contain, lstat-classify the final component,
+    # pass absence through — is audit_bundle._containment.contain since
+    # 2026-09-05 (it used to live only here, while four sibling readers carried
+    # the containment half alone). This chokepoint keeps its own vocabulary:
+    # every refusal is an UnsafeBundlePath whose message names the manifest.
     bundle_root = bundle_dir.resolve()
-    candidate = (bundle_dir / rel_path).resolve()
     try:
-        candidate.relative_to(bundle_root)
-    except ValueError as exc:
-        raise UnsafeBundlePath(
-            f"manifest path {rel_path!r} resolves outside bundle_dir "
-            f"({candidate} not under {bundle_root})"
-        ) from exc
-    # No-follow object-type discipline on the FINAL component. Containment was
-    # established above (resolve() follows EVERY component, so an intermediate
-    # symlink that escaped the bundle was already rejected). lstat the
-    # unresolved join so a final-component symlink is seen AS a symlink, not its
-    # target. Absence is the caller's exists() concern — pass through unchanged.
-    try:
-        st = os.lstat(bundle_dir / rel_path)
-    except (FileNotFoundError, NotADirectoryError):
-        return candidate
-    except OSError as exc:
-        raise UnsafeBundlePath(
-            f"manifest path {rel_path!r} could not be stat'd "
-            f"({type(exc).__name__}: {exc})"
-        ) from exc
-    mode = st.st_mode
-    if stat_module.S_ISDIR(mode):
-        raise UnsafeBundlePath(
-            f"manifest path {rel_path!r} resolves to a directory ({candidate}); "
-            "every files/snapshots entry must point at a regular file"
-        )
-    if stat_module.S_ISLNK(mode):
-        # An in-tree symlink. Containment (above, via resolve()) already proved
-        # the target stays under bundle_dir — a symlink that ESCAPED the bundle
-        # was rejected as path_escape and never reaches here. The strict-SHA
-        # walk TOLERATES a contained symlink as-built because the dereferenced
-        # bytes are SHA-pinned (test_declared_in_tree_symlink_keeps_as_built_
-        # tolerance), so this shared chokepoint only requires the contained
-        # target be a regular file. Surfaces that must not follow EVEN a
-        # contained link (the append-only attribution read, which is not
-        # SHA-pinned) layer O_NOFOLLOW on top of this helper.
-        if candidate.is_file():
-            return candidate
-        raise UnsafeBundlePath(
-            f"manifest path {rel_path!r} is a symlink to a non-regular object "
-            f"({candidate}); a manifest-declared path must resolve to a "
-            "regular file, never a directory or special file"
-        )
-    if not stat_module.S_ISREG(mode):
+        return contain(bundle_dir, rel_path)
+    except ContainmentError as exc:
+        candidate = bundle_dir / rel_path
+        if exc.reason == "escape":
+            raise UnsafeBundlePath(
+                f"manifest path {rel_path!r} resolves outside bundle_dir "
+                f"({candidate} not under {bundle_root})"
+            ) from exc
+        if exc.reason == "unstatable":
+            raise UnsafeBundlePath(
+                f"manifest path {rel_path!r} could not be stat'd ({exc})"
+            ) from exc
+        if exc.reason == "unrepresentable":
+            raise UnsafeBundlePath(str(exc)) from exc
+        # not_regular: keep the three as-built faces tests and the conservation
+        # gate read — directory / symlink-to-non-regular / non-regular file.
+        msg = str(exc)
+        if "resolves to a directory" in msg:
+            raise UnsafeBundlePath(
+                f"manifest path {rel_path!r} resolves to a directory ({candidate}); "
+                "every files/snapshots entry must point at a regular file"
+            ) from exc
+        if "symlink to a non-regular" in msg:
+            raise UnsafeBundlePath(
+                f"manifest path {rel_path!r} is a symlink to a non-regular object "
+                f"({candidate}); a manifest-declared path must resolve to a "
+                "regular file, never a directory or special file"
+            ) from exc
         raise UnsafeBundlePath(
             f"manifest path {rel_path!r} is a non-regular file ({candidate}); "
             "a FIFO, socket, or device would block or mislead a blocking read — "
             "every files/snapshots entry must point at a regular file"
-        )
-    return candidate
+        ) from exc
 
 
 def open_regular_fd_nofollow(path: Path) -> int:
@@ -1425,6 +1410,7 @@ def _validate_manifest_deep(
                 sort_keys=True,
                 separators=(",", ":"),
                 ensure_ascii=False,
+                allow_nan=False,
             ).encode("utf-8")
         ).hexdigest()
         for rel_path in m.files:

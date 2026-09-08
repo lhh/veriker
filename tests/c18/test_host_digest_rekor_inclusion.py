@@ -5,7 +5,8 @@ that closes the seam flagged in SECURITY.md: until it was wired, the `--sth-goss
 path was a STRUCTURAL pre-check only (no Merkle fold, no checkpoint-signature
 verification). This helper now drives `audit_bundle.extensions.rekor_anchor`'s real
 RFC 6962 inclusion recompute + checkpoint ECDSA-P256 signature verification against
-the pinned rekor.sigstore.dev log key, fail-closed.
+the Rekor log key the CLI resolves from the sigstore-trust-root role (this battery
+injects the documented real rekor.sigstore.dev key directly), fail-closed.
 
 Every positive byte here is the REAL captured public Rekor entry
 (`tests/fixtures/rekor_real_entry_v1.json`); only the cosign-bundle ENVELOPE is
@@ -25,7 +26,10 @@ _PKG_ROOT = Path(__file__).resolve().parents[2]
 if str(_PKG_ROOT) not in sys.path:
     sys.path.insert(0, str(_PKG_ROOT))
 
+from audit_bundle.extensions import rekor_anchor  # noqa: E402
 from veriker.cli import host_digest_verify  # noqa: E402
+
+from tests._optional_deps import requires_cryptography
 
 _FIXTURE = _PKG_ROOT / "tests" / "fixtures" / "rekor_real_entry_v1.json"
 
@@ -76,15 +80,32 @@ def _write(tmp_path: Path, bundle: dict) -> Path:
     return p
 
 
-def test_real_bundle_verifies_both_legs(tmp_path: Path) -> None:
-    """The real captured entry passes: inclusion re-derives AND checkpoint sig is valid."""
+_ANY = frozenset({"sha256:" + "ab" * 32})
+# The production log key the real fixture was logged under. The CLI resolves its
+# key from the sigstore-trust-root role (tests/c18/test_host_digest_rekor_key_from_role.py);
+# these unit tests hand the documented real bytes in explicitly.
+_PROD_KEY = rekor_anchor.load_rekor_log_public_key()
+
+
+@requires_cryptography
+def test_real_bundle_verifies_both_legs_but_binds_to_nothing_of_ours(
+    tmp_path: Path,
+) -> None:
+    """The real captured entry: inclusion re-derives AND checkpoint sig is valid — and
+    the verdict is still NOT ok, because it is a third party's entry and commits to
+    nothing this verifier holds. Before 2026-09-02 this test asserted ``ok is True``:
+    that assertion was the fail-open (any public entry verified our release)."""
     path = _write(tmp_path, _real_sigstore_bundle())
-    ok, reasons, err = host_digest_verify._verify_rekor_inclusion(path)
-    assert err == ""
-    assert reasons == []
-    assert ok is True
+    res = host_digest_verify._verify_rekor_inclusion(path, _ANY, expected_predicate_type=None, rekor_log_key=_PROD_KEY)
+    assert res.err == ""
+    assert res.inclusion_ok is True
+    assert res.checkpoint_ok is True
+    assert res.ok is False
+    assert res.reasons == ("REKOR_DSSE_PAYLOAD_ABSENT",)
+    assert res.bound_to is None
 
 
+@requires_cryptography
 def test_tampered_proof_hash_fails_closed(tmp_path: Path) -> None:
     """Flipping one inclusion-proof sibling hash breaks the Merkle re-derive → not ok."""
     bundle = _real_sigstore_bundle()
@@ -96,13 +117,15 @@ def test_tampered_proof_hash_fails_closed(tmp_path: Path) -> None:
     hashes[0] = base64.b64encode(bytes(raw)).decode("ascii")
     path = _write(tmp_path, bundle)
 
-    ok, reasons, err = host_digest_verify._verify_rekor_inclusion(path)
+    res = host_digest_verify._verify_rekor_inclusion(path, _ANY, expected_predicate_type=None, rekor_log_key=_PROD_KEY)
+    ok, reasons, err = res.ok, list(res.reasons), res.err
     assert ok is False
     # Inclusion failed → no silent pass; the err channel stays empty (verdict, not parse error).
     assert err == ""
     assert any("INCLUSION" in r for r in reasons)
 
 
+@requires_cryptography
 def test_tampered_checkpoint_fails_closed(tmp_path: Path) -> None:
     """A checkpoint whose signed root no longer matches → checkpoint leg fails → not ok."""
     bundle = _real_sigstore_bundle()
@@ -113,7 +136,8 @@ def test_tampered_checkpoint_fails_closed(tmp_path: Path) -> None:
     )
     path = _write(tmp_path, bundle)
 
-    ok, reasons, err = host_digest_verify._verify_rekor_inclusion(path)
+    res = host_digest_verify._verify_rekor_inclusion(path, _ANY, expected_predicate_type=None, rekor_log_key=_PROD_KEY)
+    ok, reasons, err = res.ok, list(res.reasons), res.err
     assert ok is False
     assert err == ""
     assert any("CHECKPOINT" in r for r in reasons)
@@ -122,15 +146,17 @@ def test_tampered_checkpoint_fails_closed(tmp_path: Path) -> None:
 def test_malformed_bundle_fails_closed(tmp_path: Path) -> None:
     """An empty tlogEntries list is a malformed anchor → fail-closed with an err."""
     path = _write(tmp_path, {"verificationMaterial": {"tlogEntries": []}})
-    ok, reasons, err = host_digest_verify._verify_rekor_inclusion(path)
+    res = host_digest_verify._verify_rekor_inclusion(path, _ANY, expected_predicate_type=None, rekor_log_key=_PROD_KEY)
+    ok, err = res.ok, res.err
     assert ok is False
     assert err != ""
 
 
 def test_absent_bundle_fails_closed(tmp_path: Path) -> None:
     """A path that does not exist fails closed (never a silent pass)."""
-    ok, reasons, err = host_digest_verify._verify_rekor_inclusion(
-        tmp_path / "does-not-exist.json"
+    res = host_digest_verify._verify_rekor_inclusion(
+        tmp_path / "does-not-exist.json", _ANY, expected_predicate_type=None, rekor_log_key=_PROD_KEY
     )
+    ok, err = res.ok, res.err
     assert ok is False
     assert err != ""

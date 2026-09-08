@@ -35,6 +35,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..admission import admit_json_file
+from .._containment import ContainmentError, contain
 from ..plugin import ParsedInputs
 from ..work_set import WorkSet, WorkSetError
 from .coverage_trigger import (
@@ -163,6 +164,26 @@ def _first_nonfinite_path(value: object) -> str | None:
 _OUTPUT_ID_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._:-]{0,249}\Z")
 
 
+def _check_name_for(output_id: object) -> str:
+    """The per-output check name, safe to print. A producer-chosen output_id
+    that has NOT passed `_OUTPUT_ID_RE` is interpolated as its (bounded) repr,
+    never raw: the name reaches the terminal face, which is assembled by
+    string concatenation, so a raw id carrying newlines forged whole PASS rows
+    and a fake summary line above the real one (red team, 2026-09-06 — exit
+    code and final line were right; a log tail or a grep was not). A valid id
+    is unchanged, so every existing consumer of `spec_pinned_dispatch:<id>`
+    sees exactly what it saw."""
+    if isinstance(output_id, str) and _OUTPUT_ID_RE.match(output_id):
+        return f"spec_pinned_dispatch:{output_id}"
+    try:
+        shown = repr(output_id)
+    except Exception:  # noqa: BLE001 — a name formatter never raises (§C9)
+        shown = "<unrepresentable>"
+    if len(shown) > 80:
+        shown = shown[:80] + "…"
+    return f"spec_pinned_dispatch:{shown}"
+
+
 # The outputs/ trigger has ONE owner (coverage_trigger), shared with
 # BundleVerifier's outer gate so the two cannot drift apart.
 _outputs_dir = outputs_dir
@@ -234,6 +255,7 @@ def run_spec_pinned_dispatch(
     acceptance_out: dict | None = None,
     anchored_types_out: set[str] | None = None,
     resolved_types_out: set[str] | None = None,
+    recompute_details_out: dict[str, str] | None = None,
 ) -> list[DispatchFailure]:
     """Run spec-pinned dispatch over manifest.outputs. Returns collected
     failures (empty == all covered outputs re-derived and agreed).
@@ -434,7 +456,7 @@ def run_spec_pinned_dispatch(
         output_id = o.get("output_id")
         type_key = o.get("type")
         conforms_to = o.get("conforms_to")
-        cn = f"spec_pinned_dispatch:{output_id}"
+        cn = _check_name_for(output_id)
         if not isinstance(output_id, str) or not output_id:
             failures.append(
                 DispatchFailure(
@@ -530,19 +552,17 @@ def run_spec_pinned_dispatch(
         #     changes the spec SHA the anchor lists (-> AnchorViolation upstream).
         #     Inert for any binding that pins nothing (pinned_inputs == ()). ---
         if binding.pinned_inputs:
-            bundle_root = bundle_dir.resolve()
             pin_failed = False
             for rel, want_sha in binding.pinned_inputs:
-                pinned_path = (bundle_dir / rel).resolve()
                 try:
-                    pinned_path.relative_to(bundle_root)
-                except ValueError:
+                    pinned_path = contain(bundle_dir, rel)
+                except ContainmentError as exc:
                     failures.append(
                         DispatchFailure(
                             cn,
                             "PINNED_INPUT_UNSAFE",
-                            f"output {output_id!r}: pinned input {rel!r} resolves "
-                            "outside the bundle — refusing the read.",
+                            f"output {output_id!r}: pinned input {rel!r} "
+                            f"refused ({exc.reason}): {exc} — refusing the read.",
                         )
                     )
                     pin_failed = True
@@ -582,16 +602,15 @@ def run_spec_pinned_dispatch(
         # traversal, but assert the resolved path stays inside outputs/ so even
         # a symlink under outputs/ or a platform-specific path quirk (e.g. a
         # Windows drive-relative segment) cannot steer the read outside it.
-        outputs_root = _outputs_dir(bundle_dir).resolve()
         try:
-            claimed_path.resolve().relative_to(outputs_root)
-        except ValueError:
+            contain(_outputs_dir(bundle_dir), claimed_path.name)
+        except ContainmentError as exc:
             failures.append(
                 DispatchFailure(
                     cn,
                     "OUTPUT_ID_UNSAFE",
-                    f"output {output_id!r}: claimed-value path resolves outside "
-                    "outputs/ — refusing the read.",
+                    f"output {output_id!r}: claimed-value path refused "
+                    f"({exc.reason}): {exc} — refusing the read.",
                 )
             )
             results.append(False)
@@ -975,6 +994,15 @@ def run_spec_pinned_dispatch(
         results.append(True)
         if verified_outputs is not None:
             verified_outputs.add(output_id)
+        # A PASSING output's `RecomputedValue.detail` used to reach nothing:
+        # only the mismatch branch above carried it, so a primitive's own
+        # coverage statement ("judged 94 of 120 samples") vanished from every
+        # green run that did not print it by hand. It rides out here as a
+        # DISCLOSURE (the verifier renders it under `recompute_detail:`), never
+        # as a gate: the text is the auditor's primitive's, but it may quote
+        # producer data, so it is reported, not trusted. Empty detail = no row.
+        if recompute_details_out is not None and recomputed.detail:
+            recompute_details_out[output_id] = str(recomputed.detail)
 
     # --- Cardinality guard (§4a.8): one result per declared output. ---
     if len(results) != len(outputs):

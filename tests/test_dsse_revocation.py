@@ -22,7 +22,9 @@ import inspect
 import json
 
 import pytest
-import rfc8785
+# Optional-dependency slice: SKIP cleanly when rfc8785 is absent
+# (installed by `veriker[crypto]`) rather than failing collection.
+rfc8785 = pytest.importorskip("rfc8785")
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from audit_bundle.revocation import (

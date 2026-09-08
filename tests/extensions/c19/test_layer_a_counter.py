@@ -23,8 +23,13 @@ import hashlib
 import hmac
 import secrets
 
-import cbor2
 import pytest
+
+# c19/COSE slice: bind cbor2 through importorskip so a lean install (one
+# without the `c19` extra) SKIPS this file instead of failing collection.
+# This REPLACES `import cbor2` deliberately — a guard placed after the bare
+# import never runs, because the import itself is what raises.
+cbor2 = pytest.importorskip("cbor2")
 
 # Import surface drives the real-impl API surface. Sc19a-001 lands this file
 # BEFORE the implementation; expect ImportError until sc19a-003 stubs land.
@@ -569,8 +574,11 @@ def test_legacy_bundle_no_causal_chain_layer_a_still_verifies():
 
 def _fresh_eddsa_keypair(kid: bytes) -> dict:
     """Return {'signing': pycose key with private material, 'verifying': key with public only}."""
+    pytest.importorskip("pycose")  # SCITT/COSE helper: needs veriker[dev]
     from pycose.keys import OKPKey
+    pytest.importorskip("pycose")  # SCITT/COSE helper: needs veriker[dev]
     from pycose.keys.curves import Ed25519
+    pytest.importorskip("pycose")  # SCITT/COSE helper: needs veriker[dev]
     from pycose.keys.keyparam import KpKid
 
     # Generate Ed25519 keypair
@@ -582,8 +590,11 @@ def _fresh_eddsa_keypair(kid: bytes) -> dict:
 
 def _well_formed_cose_sign1(payload: bytes, signing_key, kid: bytes) -> bytes:
     """COSE_Sign1 with alg=EdDSA in PROTECTED header, kid in protected."""
+    pytest.importorskip("pycose")  # SCITT/COSE helper: needs veriker[dev]
     from pycose.algorithms import EdDSA
+    pytest.importorskip("pycose")  # SCITT/COSE helper: needs veriker[dev]
     from pycose.headers import Algorithm, KID
+    pytest.importorskip("pycose")  # SCITT/COSE helper: needs veriker[dev]
     from pycose.messages import Sign1Message
 
     msg = Sign1Message(
@@ -621,6 +632,7 @@ def _cose_sign1_alg_in_unprotected(payload: bytes, signing_key, kid: bytes) -> b
     # Sign with EdDSA over Sig_structure with empty external_aad
     sig_structure = ["Signature1", protected_map, b"", payload]
     to_be_signed = cbor2.dumps(sig_structure)
+    pytest.importorskip("pycose")  # SCITT/COSE helper: needs veriker[dev]
     from pycose.algorithms import EdDSA
 
     sig = EdDSA.sign(signing_key, to_be_signed)

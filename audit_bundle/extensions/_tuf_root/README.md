@@ -21,8 +21,29 @@ on a different CDN; Sigstore BYO-TUF pattern).
 | File | Owner | Purpose |
 |------|-------|---------|
 | `root.json` | C18 TUF role | 3-of-3 ed25519 root signers; threshold 2-of-3; ≤90d expiry |
-| `sigstore_trust_root.json` | Sigstore-trust-root TUF role (c18-010) | Pinned Fulcio + CTFE + Rekor pubkeys per OQ-2 |
-| `plugin_allowlist.json` | Plugin allowlist TUF role (c18-010) | ghcr.io/veriker/ plugin OCI digests per CV5 |
+| `sigstore_trust_root.json` | Sigstore-trust-root TUF role (c18-010) | Signed 2-of-3 role document (since 2026-09-02) pinning the DIGESTS and key types of the Fulcio + CTFE + Rekor key-byte targets per OQ-2; the bytes are separate targets |
+| `plugin_allowlist.json` | Plugin allowlist TUF role (c18-010) | ghcr.io/veriker/ plugin OCI digests per CV5 — UNSIGNED document (targets key only), no shipped consumer |
+| `revocation_root.json` | Revocation-root TUF role | Signed 2-of-3 Ed25519 role document (keyid = sha256 of the key) that pins the revocation-list signer consumed by `audit_bundle/revocation.py` |
+
+## How the role documents and key bytes are served (2026-09-02)
+
+The files in this directory are the BOOTSTRAP copies. A verifier never reads them
+as trust: the strict fetchers (`c18_tuf_client.fetch_sigstore_trust_root` /
+`fetch_plugin_allowlist` / `fetch_revocation_root`) fetch each role document as a
+TARGET of the release TUF repository (`ROLE_TARGET_NAMES`, e.g.
+`sigstore-trust-root/sigstore_trust_root.json`, payload type
+`application/vnd.nexi.c18.<role>+json`) through the root-anchored chain.
+
+`sigstore_trust_root.json` pins DIGESTS of key files, never bytes. The bytes are
+served as targets of the SAME repository under `sigstore-trust-root/keys/<entry>`
+(payload type `application/vnd.nexi.c18.sigstore-trust-root.key+pem`), and
+`fetch_sigstore_trust_root_key(entry)` requires the fetched bytes to hash to the
+role's `expected_sha256_at_v0_3_cut` for that entry — the ceremony's pin is the
+authority, the chain's hash is the second pin. `veriker/cli/host_digest_verify.py`
+resolves its Rekor log key this way (`--rekor-log-key-target`, default
+`rekor.pub`; a Rekor v2 Ed25519 log is a separate entry with
+`type: ed25519-public-key-pem`). The ceremony therefore publishes, per entry:
+the key bytes as a target, and the digest + type in the role document.
 
 ## What MUST NEVER appear here
 
@@ -37,6 +58,14 @@ on a different CDN; Sigstore BYO-TUF pattern).
   exactly; anything longer is suspect.)
 
 ## Key ceremony — production v0.3.0-rc1
+
+> The step-by-step ceremony, what each consumer refuses until it runs, the
+> signing recipe for every role document, the first-emission checks on the
+> image-binding bundle and the `LiveRekorTransport` gate are in the internal
+> key-ceremony runbook (not shipped; the shipped statement of the same posture
+> is SECURITY.md → "Verifier-identity trust boundary (C18)", and the executable
+> recipe for a signed role document is
+> `tests/fixtures/dsse_trust_material.py::sign_role_document`).
 
 The bundled `root.json` currently in this directory is the **bootstrap**
 root — generated deterministically via `release/tuf_root_bootstrap.py`

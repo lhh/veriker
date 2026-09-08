@@ -53,7 +53,7 @@ keying on `exit != 0` reads both failure classes as "not certified".
 **C-5. No silent upgrade.** Evidence that is present but not evaluated by this
 build must surface as ERROR/INCOMPLETE (exit 2), never ride a green verdict:
 
-- DSSE-sealed bundle, no crypto importable → `DSSE_SIGNATURE_UNCHECKED_NO_CRYPTO`
+- DSSE-sealed bundle, no crypto importable (or no `--dsse-*` trust material given) → `DSSE_SIGNATURE_UNCHECKED_NO_CRYPTO`. With `--dsse-allowlist` + `--dsse-revocation-list` + `--dsse-revocation-root[-tuf]` the Ed25519 gate runs inside `verify()` and its own codes decide; unusable auditor material is `DSSE_CONTEXT_ARG_INVALID` (exit 2, operator), never a bundle verdict.
 - Extension receipt with no registered handler → `EXTENSION_RECEIPT_NOT_EVALUATED`
 - Bundle-supplied re-derivation pack, not executed → `RE_DERIVATION_NOT_EXECUTED`
 - Cross-host evidence without a wired cross-host verifier → ERROR (per-edge

@@ -48,7 +48,9 @@ _CASES = [
         aigov_rederivation,
         "AIGOV-RISK-CLASS",
         "eu_ai_act_risk_classification",
-        {"systems": []},
+        # Same binding as the control pack since 2026-09-05 (the guard had been
+        # lost in the paste; tests/test_reference_pack_parity.py pins the two).
+        {"systems": [], "captured_at": _OBSERVED_AT},
         id="aigov_rederivation",
     ),
 ]

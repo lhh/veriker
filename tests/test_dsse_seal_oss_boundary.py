@@ -26,6 +26,8 @@ import sys
 import textwrap
 from pathlib import Path
 
+from tests._optional_deps import requires_cryptography
+
 _PREMIUM_MODULE = "audit_bundle.emitter_premium"
 _PRODUCT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -75,6 +77,7 @@ def _static_imports_premium(path: Path) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
+@requires_cryptography
 def test_seal_modules_do_not_pull_in_premium_at_import_time() -> None:
     """A fresh interpreter importing the open seal path must not load premium.
 

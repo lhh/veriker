@@ -9,6 +9,10 @@ from __future__ import annotations
 
 import pytest
 
+# Optional-dependency slice: SKIP cleanly when cryptography is absent
+# (installed by `veriker[crypto]`) rather than failing collection.
+pytest.importorskip("cryptography")
+
 from audit_bundle.gate.verdict_signing import (
     AUTO_APPROVE,
     HUMAN_REVIEW,

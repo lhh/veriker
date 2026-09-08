@@ -29,8 +29,13 @@ import hashlib
 import sys
 from pathlib import Path
 
-import cbor2
 import pytest
+
+# c19/COSE slice: bind cbor2 through importorskip so a lean install (one
+# without the `c19` extra) SKIPS this file instead of failing collection.
+# This REPLACES `import cbor2` deliberately — a guard placed after the bare
+# import never runs, because the import itself is what raises.
+cbor2 = pytest.importorskip("cbor2")
 
 _PKG_ROOT = Path(__file__).resolve().parents[3]
 if str(_PKG_ROOT) not in sys.path:

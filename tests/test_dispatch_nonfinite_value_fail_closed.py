@@ -16,8 +16,13 @@ fail-closed REJECT (`NON_FINITE_VALUE`). This lifts the per-operand guard that
 `scalar_epsilon` already had to a boundary that holds for every comparator kind.
 
 Two boundaries asserted here, plus a no-regression check:
-  * a non-finite CLAIMED scalar under an `exact` comparator -> NON_FINITE_VALUE
-    (not a GREEN `inf == inf`);
+  * a non-finite CLAIMED scalar under an `exact` comparator -> REJECTED
+    (not a GREEN `inf == inf`). Since 2026-09-05 the claimed file is parsed by
+    `audit_bundle.strict_json`, which refuses the `Infinity`/`NaN` TOKEN at the
+    admission boundary — so the claimed side now surfaces as
+    CLAIMED_VALUE_MALFORMED with the token named in the detail, one boundary
+    EARLIER than dispatch's value walk. That walk (NON_FINITE_VALUE) stays live
+    for the RECOMPUTED side, where no parser sits in front of the float;
   * a non-finite field nested inside a CLAIMED structured/list value -> rejected
     (the laundering is not comparator-specific);
   * a finite claimed value still PASSES (the boundary does not over-reject).
@@ -92,44 +97,57 @@ def _run(tmp_path, comparator, recomputed, claimed_raw, monkeypatch):
     monkeypatch.setattr(
         D, "resolve_primitive", lambda _pid: _stub_primitive(recomputed)
     )
-    failures = run_spec_pinned_dispatch(bundle, manifest, anchor)
+    return run_spec_pinned_dispatch(bundle, manifest, anchor)
+
+
+def _codes(failures) -> set[str]:
     return {f.reason_code for f in failures}
+
+
+def _assert_claimed_token_refused(failures, token: str) -> None:
+    """The claimed-side refusal: the strict parser named the token, and the
+    dispatch walk never saw a float to call non-finite."""
+    codes = _codes(failures)
+    assert "CLAIMED_VALUE_MALFORMED" in codes, codes
+    assert any(token in (f.detail or "") for f in failures), [f.detail for f in failures]
+    assert "RE_DERIVATION_MISMATCH" not in codes, codes
 
 
 def test_claimed_infinity_scalar_exact_is_rejected_not_blessed(tmp_path, monkeypatch):
     """recompute=inf, claim=Infinity, exact comparator. `inf == inf` would be
     True; the non-finite boundary must REJECT before the comparator runs."""
-    codes = _run(
+    failures = _run(
         tmp_path,
         {"kind": "exact", "params": {}},
         recomputed=float("inf"),
         claimed_raw=b'{"value": Infinity}',
         monkeypatch=monkeypatch,
     )
-    assert "NON_FINITE_VALUE" in codes, codes
-    assert "RE_DERIVATION_MISMATCH" not in codes, codes
+    _assert_claimed_token_refused(failures, "Infinity")
 
 
 def test_claimed_nan_scalar_is_rejected(tmp_path, monkeypatch):
-    codes = _run(
+    failures = _run(
         tmp_path,
         {"kind": "exact", "params": {}},
         recomputed=1.0,
         claimed_raw=b'{"value": NaN}',
         monkeypatch=monkeypatch,
     )
-    assert "NON_FINITE_VALUE" in codes, codes
+    _assert_claimed_token_refused(failures, "NaN")
 
 
 def test_nonfinite_recomputed_side_is_rejected(tmp_path, monkeypatch):
     """The overflow can live on the verifier's own recompute (faithfully mirrored
     arithmetic that overflowed). A finite claim must not let it through."""
-    codes = _run(
-        tmp_path,
-        {"kind": "scalar_epsilon", "params": {"epsilon": 1e-6}},
-        recomputed=float("-inf"),
-        claimed_raw=b'{"value": 0.0}',
-        monkeypatch=monkeypatch,
+    codes = _codes(
+        _run(
+            tmp_path,
+            {"kind": "scalar_epsilon", "params": {"epsilon": 1e-6}},
+            recomputed=float("-inf"),
+            claimed_raw=b'{"value": 0.0}',
+            monkeypatch=monkeypatch,
+        )
     )
     assert "NON_FINITE_VALUE" in codes, codes
 
@@ -139,23 +157,25 @@ def test_nonfinite_nested_in_structured_claim_is_rejected(tmp_path, monkeypatch)
     list/record claimed value is caught by the structure-walking boundary, even
     though the comparator (set, here) does value-equality that would match
     inf==inf field-wise."""
-    codes = _run(
+    failures = _run(
         tmp_path,
         {"kind": "set", "params": {}},
         recomputed=[1.0, float("inf"), 3.0],
         claimed_raw=b'{"value": [1.0, Infinity, 3.0]}',
         monkeypatch=monkeypatch,
     )
-    assert "NON_FINITE_VALUE" in codes, codes
+    _assert_claimed_token_refused(failures, "Infinity")
 
 
 def test_finite_value_still_passes(tmp_path, monkeypatch):
     """No over-rejection: a finite recompute equal to a finite claim PASSES."""
-    codes = _run(
-        tmp_path,
-        {"kind": "exact", "params": {}},
-        recomputed=42.5,
-        claimed_raw=b'{"value": 42.5}',
-        monkeypatch=monkeypatch,
+    codes = _codes(
+        _run(
+            tmp_path,
+            {"kind": "exact", "params": {}},
+            recomputed=42.5,
+            claimed_raw=b'{"value": 42.5}',
+            monkeypatch=monkeypatch,
+        )
     )
     assert codes == set(), codes

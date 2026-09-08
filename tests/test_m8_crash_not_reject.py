@@ -31,6 +31,10 @@ import json
 
 import pytest
 
+# Optional-dependency slice: SKIP cleanly when rfc8785 is absent
+# (installed by `veriker[crypto]`) rather than failing collection.
+pytest.importorskip("rfc8785")
+
 import audit_bundle.bundle_manifest as bundle_manifest_mod
 import audit_bundle.revocation as revocation_mod
 from audit_bundle.bundle_manifest import (

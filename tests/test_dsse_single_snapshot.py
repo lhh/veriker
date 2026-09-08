@@ -30,6 +30,13 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+import pytest
+
+# Optional-dependency slice: SKIP cleanly when rfc8785 is absent
+# (installed by `veriker[crypto]`) rather than failing collection. This must
+# precede the imports below, which reach it directly or transitively.
+pytest.importorskip("rfc8785")
+
 import rfc8785
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 

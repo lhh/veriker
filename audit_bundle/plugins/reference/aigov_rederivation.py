@@ -25,7 +25,24 @@ signed attestation, not a wall-clock re-fetch.
 
 Fail-closed: a verdict is accepted only if (control known AND cited test_fn+version
 matches the pinned control AND evidence hash matches the captured object AND test_fn
-registered AND signature valid AND re-derivation matches the claim).
+registered AND signature valid AND re-derivation matches the claim AND the
+attestation's observed_at binds to the evidence object's own captured_at).
+
+observed_at binding: every attestation claims an observed_at — the instant it claims to
+have captured the evidence; the evidence object independently carries its own
+captured_at. The verifier requires the two to parse as ISO-8601 UTC timestamps and be
+EQUAL (the reference builder writes both from the same capture instant — see
+_build_bundle.py's single _OBSERVED_AT constant — so no ordering slack is invented).
+HONESTY RAIL: both fields are producer-authored (the same collector writes both), so
+this binding does not establish wall-clock truth — a colluding collector can still
+misdate both fields identically. What it kills is INTERNAL inconsistency: an
+attestation whose claimed observation time has been relabeled/detached from the
+evidence object it purports to attest. Trusted wall-clock time is a distinct property
+(see C19.C trusted-time in the premium emitter), out of scope for this open pack.
+This block was ported VERBATIM from control_rederivation.py on 2026-09-05: the two
+packs are one program pasted twice, and this one had silently lost the guard.
+tests/test_reference_pack_parity.py now pins the shared helpers and the _verify
+reason-code vocabulary of the two packs equal.
 
 Responsible-actor binding (no scapegoat): attestation signatures are re-checked against
 a VERIFIER-WIRED key (env VKERNEL_COLLECTOR_HMAC_KEY, hex) — never against key material
@@ -43,7 +60,9 @@ Reads:
   spec/controls.json                  — nexi-control-lib-v1 (AI-gov controls + framework maps + pinned test_fn versions)
   env VKERNEL_COLLECTOR_HMAC_KEY      — verifier-wired collector-recheck key (hex); a legacy
                                         bundle's spec/collector_hmac_key.hex is IGNORED
-  evidence/ai_system_registry.json    — captured AI-system registry snapshot at time T
+  evidence/ai_system_registry.json    — captured AI-system registry snapshot at time T; the
+                                        object's own 'captured_at' is cross-checked against the
+                                        citing attestation's 'observed_at' (see binding note above)
   payload/control_attestations.json   — per-control signed attestation (verdict + evidence hash + observed_at)
   coverage/control_period.json        — closed-world: n_issued = passing controls, n_withheld = failing controls
 
@@ -61,7 +80,9 @@ import hashlib
 import hmac
 import json
 import os
+import stat
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 PASS = "pass"
@@ -117,6 +138,43 @@ def _admit_depth_scan(raw, name):
                 depth -= 1
 
 
+# Strict-parse hooks — duplicated, not imported (stdlib-only / standalone pack;
+# see module docstring). Same three refusals as audit_bundle.strict_json, which
+# this pack cannot import; tests/test_reference_pack_parity.py pins every
+# pack's copy to control_rederivation's, and test_strict_json_single_source
+# pins control's behaviour to the substrate parser.
+_ADMIT_MAX_INT_DIGITS = 600
+
+
+def _admit_pairs(pairs):
+    """object_pairs_hook: a duplicate object key is refused (stdlib keeps the
+    LAST; a first-wins reader sees a different document under the same sha)."""
+    d = {}
+    for k, v in pairs:
+        if k in d:
+            raise ValueError(f"duplicate object key {k!r} in input")
+        d[k] = v
+    return d
+
+
+def _admit_int(s):
+    if len(s.lstrip("-")) > _ADMIT_MAX_INT_DIGITS:
+        raise ValueError(f"integer token longer than {_ADMIT_MAX_INT_DIGITS} digits")
+    return int(s)
+
+
+def _admit_const(name):
+    raise ValueError(f"non-standard JSON token {name!r} rejected")
+
+
+def _admit_loads(raw):
+    """json.loads with the three strict hooks. Every producer-byte parse in this
+    pack goes through here."""
+    return json.loads(
+        raw, object_pairs_hook=_admit_pairs, parse_int=_admit_int, parse_constant=_admit_const
+    )
+
+
 def _admitted_json(path):
     """Size- and depth-bounded replacement for json.loads(path.read_text())."""
     size = path.stat().st_size
@@ -124,7 +182,7 @@ def _admitted_json(path):
         raise ValueError(f"{path.name}: {size} bytes exceeds max {_ADMIT_MAX_BYTES}")
     raw = path.read_bytes()
     _admit_depth_scan(raw, path.name)
-    return json.loads(raw)
+    return _admit_loads(raw)
 
 
 # ---------------------------------------------------------------------------
@@ -239,6 +297,24 @@ def _load_verifier_hmac_key() -> tuple[bytes | None, str | None]:
         )
 
 
+def _parse_iso8601_utc(value: str) -> "datetime":
+    """Parse an ISO-8601 timestamp into a timezone-aware UTC datetime; raise
+    ValueError on any parse failure or a missing UTC offset. Naive datetimes
+    (no tzinfo) are rejected — a timestamp claim without a UTC binding is not
+    comparable across producer and evidence. Mirrors
+    audit_bundle.plugins.stamp_lattice._parse_iso8601_to_aware in spirit
+    (accepts the 'Z' suffix, offset notation, and fractional seconds);
+    duplicated rather than imported because this pack is stdlib-only /
+    standalone (see module docstring)."""
+    if not isinstance(value, str) or not value:
+        raise ValueError("not a non-empty string")
+    normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
+    dt = datetime.fromisoformat(normalized)  # raises ValueError on malformed input
+    if dt.tzinfo is None:
+        raise ValueError(f"{value!r} has no UTC offset")
+    return dt.astimezone(timezone.utc)
+
+
 def sha256_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -249,10 +325,25 @@ def _resolve_within(root: Path, rel: str) -> Path | None:
     caller fails closed instead of reading an out-of-bundle file. Mirrors
     audit_bundle/rederivation/primitives/_safepath.resolve_within — this pack is
     stdlib-only / standalone, so it carries its own copy."""
-    candidate = (root / rel).resolve()
     try:
+        candidate = (root / rel).resolve()
         candidate.relative_to(root.resolve())
-    except ValueError:
+    except (ValueError, UnicodeEncodeError):
+        return None
+    # Object-type discipline on the unresolved join (the substrate rule in
+    # audit_bundle._containment, which this pack cannot import): a directory,
+    # FIFO, socket or device at a producer-named path would block or mislead
+    # the blocking read that follows. Absence passes through (the caller's
+    # exists() concern); a contained symlink to a regular file is tolerated.
+    try:
+        st = os.lstat(root / rel)
+    except (FileNotFoundError, NotADirectoryError):
+        return candidate
+    except OSError:
+        return None
+    if stat.S_ISLNK(st.st_mode):
+        return candidate if candidate.is_file() else None
+    if not stat.S_ISREG(st.st_mode):
         return None
     return candidate
 
@@ -408,6 +499,46 @@ def _verify(bundle_dir: Path) -> tuple[str | None, list[dict]]:
                 f"VERDICT_DIVERGENCE: {control_id}: attestation claims {claimed_verdict!r} but the "
                 f"verifier re-derives {verifier_verdict!r} from the captured registry "
                 f"(test_fn {test_fn}@{test_fn_version})",
+                ledger,
+            )
+
+        # 6b. observed_at must bind to the evidence object's OWN captured_at.
+        #     Materially auditable for continuous compliance: which period does
+        #     this pass/fail apply to. Both fields are producer-authored — this
+        #     kills a relabeled/detached observed_at, not wall-clock truth (see
+        #     the module docstring's HONESTY RAIL). The reference builder writes
+        #     both from the same capture instant, so equality is required (not
+        #     an ordering tolerance the builder never establishes).
+        evidence_captured_at = evidence.get("captured_at")
+        if not isinstance(evidence_captured_at, str) or not evidence_captured_at:
+            return (
+                f"OBSERVED_AT_EVIDENCE_UNBOUND: {control_id}: evidence {evidence_ref!r} "
+                f"has no non-empty string 'captured_at' field to bind observed_at against",
+                ledger,
+            )
+        try:
+            observed_dt = _parse_iso8601_utc(observed_at)
+        except ValueError as exc:
+            return (
+                f"OBSERVED_AT_UNPARSEABLE: {control_id}: attestation observed_at "
+                f"{observed_at!r} does not parse as an ISO-8601 UTC timestamp: {exc}",
+                ledger,
+            )
+        try:
+            captured_dt = _parse_iso8601_utc(evidence_captured_at)
+        except ValueError as exc:
+            return (
+                f"OBSERVED_AT_UNPARSEABLE: {control_id}: evidence captured_at "
+                f"{evidence_captured_at!r} ({evidence_ref!r}) does not parse as an "
+                f"ISO-8601 UTC timestamp: {exc}",
+                ledger,
+            )
+        if observed_dt != captured_dt:
+            return (
+                f"OBSERVED_AT_EVIDENCE_MISMATCH: {control_id}: attestation observed_at "
+                f"{observed_at!r} does not equal evidence captured_at "
+                f"{evidence_captured_at!r} ({evidence_ref!r}) — the attestation's claimed "
+                f"observation time has drifted from the evidence it attests",
                 ledger,
             )
 

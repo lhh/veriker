@@ -56,10 +56,36 @@ _HAVE_NODE = _have_tool(["node", "--version"])
 _HAVE_FFMPEG = _have_tool(["ffmpeg", "-version"])
 _HAVE_NPX = _have_tool(["npx", "--version"])
 
-pytestmark = pytest.mark.skipif(
-    not (_HAVE_NODE and _HAVE_FFMPEG and _HAVE_NPX),
-    reason="hyperframes_render_minimal needs node, npx, and ffmpeg on PATH",
-)
+# QUARANTINED as `heavy_pilot` (Max, 2026-09-05) — deselected by default,
+# INCLUDING at landing; opt back in with
+#   pytest --run-heavy-pilots tests/test_hyperframes_render_minimal.py -m ""
+#
+# Two reasons, and the second is the load-bearing one:
+#
+#   1. COST. All six tests call `_fresh_bundle()`, i.e. a full
+#      `npx hyperframes render` each — six node+ffmpeg renders per suite run.
+#
+#   2. IT CANNOT CURRENTLY PASS, and quarantine does NOT fix that. The pilot
+#      shells out to `npx hyperframes@latest`, so the renderer updates
+#      underneath a test that compares the rendered MP4 against a COMMITTED
+#      sha. Measured on master 2026-09-05 (a clean `master` worktree, nothing
+#      of ours merged): 3 of 6 RED with
+#      `RE_DERIVATION_MISMATCH: re-derived 62b0529a..., committed 1f1683bb...`.
+#      This would have gone red on its own schedule. The real fix is to pin a
+#      hyperframes version or stop byte-comparing the render; until one of
+#      those happens the pilot is unpinnable, and this marker only stops it
+#      breaking the landing gate for every other branch.
+#
+# The file-level mark is honest ONLY because every test here genuinely needs
+# the render — no cheap static check is being silently retired with it. Check
+# that again before widening this marker to another file.
+pytestmark = [
+    pytest.mark.heavy_pilot,
+    pytest.mark.skipif(
+        not (_HAVE_NODE and _HAVE_FFMPEG and _HAVE_NPX),
+        reason="hyperframes_render_minimal needs node, npx, and ffmpeg on PATH",
+    ),
+]
 
 
 # ---------------------------------------------------------------------------

@@ -142,9 +142,9 @@ number moves.
 
 <!-- BEGIN GENERATED — render_primitive_book.py -->
 
-**24 primitives**, 17 Tier A, 4 Tier B, 3 Tier C.
+**26 primitives**, 19 Tier A, 4 Tier B, 3 Tier C.
 
-Of the **44 shipped pilots that carry a spec binding, 23 (52%) are reachable by the bare CLI** — 28 of 52 bindings (53%). The rest bind a pilot-local primitive the distribution does not hold, and reach `UNKNOWN_PRIMITIVE` rather than a verdict. This count is rendered from the tree at build time; it is a property of this release, not a target.
+Of the **45 shipped pilots that carry a spec binding, 23 (51%) are reachable by the bare CLI** — 29 of 55 bindings (52%). The rest bind a pilot-local primitive the distribution does not hold, and reach `UNKNOWN_PRIMITIVE` rather than a verdict. This count is rendered from the tree at build time; it is a property of this release, not a target.
 
 | primitive_id | shape | tier | contract revision |
 |---|---|---|---|
@@ -169,6 +169,8 @@ Of the **44 shipped pilots that carry a spec binding, 23 (52%) are reachable by 
 | `prior_auth_recompute` | first-match rule -> verdict + default (decision list) | A | `@1` |
 | `raster_recompute` | geospatial zonal count (point-in-polygon) | A | `@1` |
 | `scrabble_recompute` | scrabble dictionary adjudication (lexical membership) | B | `@1` |
+| `sheet_derivation_replay` | replay of a producer-stated operation over stated operands, with operand-existence check against the workbook | A | `@1` |
+| `sheet_query_recompute` | closed-world query over an .xlsx workbook (lookup / list / count / sum / mean / median / argmax / topk) | A | `@1` |
 | `spectra_span_recompute` | extractive span | B | `@1` |
 | `streaming_recompute` | streaming aggregation | A | `@1` |
 | `tabular_recompute` | tabular aggregation (GROUP BY + SUM/COUNT) | A | `@1` |
@@ -411,6 +413,39 @@ Scope limits:
 
 - Dictionary MEMBERSHIP only: no tile scoring, no multipliers, no bingo bonuses.
 - The wordlist is whatever the bundle commits; the primitive does not vouch for the edition's contents.
+
+### `sheet_derivation_replay`
+
+Shape: **replay of a producer-stated operation over stated operands, with operand-existence check against the workbook**. **Tier A** — shape or citable standard, guard-covered. **Contract revision `@1`.**
+
+> answer = replay(inputs/derivation.json [sheet-derivation-v1], parse(data/workbook.xlsx)) — the operation (lookup / list / count / sum / mean / median / argmax / topk) is applied to the operand values the producer states it used (argmax/topk take [label, value] pairs), with the same rounding, string-normalization and list conventions as sheet_query_recompute (a numeric-looking operand, string or number, is a number for lookup and for every arithmetic op); sheet_query_recompute; every operand must occur somewhere in the workbook (numbers by exact Decimal equality against every numeric cell, strings by normalized equality against every text cell), else the value is {kind: operand_not_in_sheet, missing, replayed} and no claim can match it.
+
+Scope limits:
+
+- This is consistency, not correctness: a wrong selection computed correctly (the other fund's rows summed right) replays to the producer's own number and passes. Only sheet_query_recompute under an auditor-pinned query catches that.
+- Operand existence is workbook-wide, not column-scoped; a value that happens to occur elsewhere in the workbook satisfies the check.
+- A lookup derivation has one operand and no arithmetic; the only thing this primitive can refuse for a lookup is a value absent from the workbook.
+- Operand existence is EXACT Decimal equality against the cell text. A workbook whose XML carries binary-float noise (74.45999999999999 for 74.46, which openpyxl writes by default) makes every honest 2-dp operand 'absent'; canonicalise such a workbook before binding it, or expect operand_not_in_sheet on honest working.
+- A non-finite operand (NaN, sNaN, Infinity, as number or string) is 'absent'.
+- Refusals carry a per-call nonce so no claimed value can equal one.
+- Both primitives in this file share one source file, so a #sha256 pin on either pins the other.
+
+### `sheet_query_recompute`
+
+Shape: **closed-world query over an .xlsx workbook (lookup / list / count / sum / mean / median / argmax / topk)**. **Tier A** — shape or citable standard, guard-covered. **Contract revision `@1`.**
+
+> answer = evaluate(inputs/query.json [sheet-query-v1], parse(data/workbook.xlsx)) — the workbook is parsed by the verifier from bytes (stdlib zip+xml; shared, inline and formula-cached strings; numeric cells as Decimal); the query's layout locates the header row by header_match, maps logical columns to header texts (casefold, whitespace-collapsed), assigns each data row a group from a Fund column, a divider row matching a regex, or the sheet name, and skips rows whose first cell matches exclude_first_cell; filters are eq/ne (numeric if both sides parse, else normalized text) and gt/gte/lt/lte (numeric); lookup requires exactly one row; sum/mean/median are exact Decimal arithmetic rounded HALF_UP to `round` places (default 2) and emitted as float; count is int; string results are casefolded and whitespace-collapsed; list/topk results are sorted de-duplicated lists; argmax and topk refuse ties; any refusal is emitted as {kind: refused, reason}.
+
+Scope limits:
+
+- The query is auditor-authored and must be pinned through the spec's pinned_inputs (inputs/query.json); an unpinned query is producer-writable and the recompute then answers whatever question the producer chose.
+- The layout (header texts, group encoding, exclusion regex) is the auditor's reading of the document, supplied as data; a layout that misreads the sheet yields a determinate refusal or a wrong-but-deterministic answer, never a pass on a producer's say-so.
+- Cells are read from cached values; formulas are not evaluated. Dates, styles and merged-cell geometry are ignored; a merged header contributes only its anchor cell.
+- The workbook is producer-visible data; unless the spec ALSO pins data/workbook.xlsx through pinned_inputs, a producer can ship the workbook under which its answer is right (measured 2026-09-02, exit 0). The pilot's make_spec pins both.
+- Divider and exclusion regexes match the cell's whitespace-collapsed text, case-insensitively; a regex that expects raw whitespace or case never matches.
+- Grid bounds: rows 1..1,048,576, columns A..16,384, and at most 4,000,000 cells materialised per sheet; a non-finite numeric cell refuses the workbook.
+- Refusals carry a per-call nonce so no claimed value can equal one.
+- Both primitives in this file share one source file, so a #sha256 pin on either pins the other.
 
 ### `spectra_span_recompute`
 

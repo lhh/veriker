@@ -373,7 +373,7 @@ class DryRunRefusal(Exception):
 
 def _canonical_sha256(obj) -> str:
     return hashlib.sha256(
-        json.dumps(obj, sort_keys=True, separators=(",", ":")).encode()
+        json.dumps(obj, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
     ).hexdigest()
 
 
@@ -531,7 +531,7 @@ def _value_sha256(val) -> str:
     Any holder of the committed inputs can re-derive the value — which is exactly the set of
     people who already have it."""
     return hashlib.sha256(
-        json.dumps(val, sort_keys=True, separators=(",", ":"), default=str).encode()
+        json.dumps(val, sort_keys=True, separators=(",", ":"), default=str, allow_nan=False).encode()
     ).hexdigest()
 
 

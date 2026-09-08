@@ -28,6 +28,10 @@ from pathlib import Path
 
 import pytest
 
+# Optional-dependency slice: SKIP cleanly when cbor2 is absent
+# (installed by `veriker[c19]`) rather than failing collection.
+pytest.importorskip("cbor2")
+
 from audit_bundle.bundle_manifest import BundleManifest
 from audit_bundle.extensions.c19.cross_host_peerreview import (
     ACK_TIMEOUT_BOUNDS_MS,
@@ -88,6 +92,22 @@ _SIGNED_PREIMAGE_FIELDS = frozenset(
 )
 
 
+# The VERIFIER holds the single-org IKM per key_id. The edge names its key_id; the
+# verifier derives K_send / K_ack from its own pinned IKM with the per-role label.
+# Before 2026-09-02 the edge carried `_test_only_K_send_hex` / `_test_only_K_ack_hex`
+# and the registered plugin read the MAC key out of the artifact it was verifying.
+_SENDER_IKM = b"\x11" * 32
+_RECEIVER_IKM = b"\x22" * 32
+_POLICY = CrossOrgKeyPolicy(
+    pinned_cose_keys={},
+    pinned_hmac_ikm={b"sender-key-0": _SENDER_IKM, b"receiver-key-0": _RECEIVER_IKM},
+)
+
+
+def _check(**kwargs) -> CrossHostPeerReviewAuthenticatorCheck:
+    return CrossHostPeerReviewAuthenticatorCheck(_POLICY, **kwargs)
+
+
 def _make_edge_dict(**overrides):
     """Well-formed cross-host edge dict per SCOPING lines 519-594.
 
@@ -102,8 +122,8 @@ def _make_edge_dict(**overrides):
     boundaries. Tests that need a timeliness VIOLATION shift the ack
     MIDP much further (≥+60_000ms).
     """
-    sender_signing_key = b"\x11" * 32
-    receiver_signing_key = b"\x22" * 32
+    sender_signing_key = _SENDER_IKM
+    receiver_signing_key = _RECEIVER_IKM
 
     defaults = dict(
         sender_host_id="host-A",
@@ -185,9 +205,6 @@ def _make_edge_dict(**overrides):
         "sender_signature": {
             "key_id": "sender-key-0",
             "sig": sender_sig.hex(),
-            # Verifier-readable key material for test-only deployment;
-            # production deploys distribute K_send via TUF (R4-ADD-4).
-            "_test_only_K_send_hex": K_send.hex(),
         },
         "send_intent_scitt_receipt": {
             "_test_only_present": True,
@@ -205,7 +222,6 @@ def _make_edge_dict(**overrides):
             "kind": "ack",
             "key_id": "receiver-key-0",
             "sig": ack_sig.hex(),
-            "_test_only_K_ack_hex": K_ack.hex(),
         },
         "ack_scitt_receipt": {
             "_test_only_present": True,
@@ -452,7 +468,7 @@ def test_false_intent_logging_without_receiver_challenge_token(tmp_path):
     edge = _make_edge_dict()
     edge["receiver_challenge_token"] = (b"\x00" * 16).hex()
     bundle_dir, manifest = _make_manifest_with_causal_chain(tmp_path, [edge])
-    plugin = CrossHostPeerReviewAuthenticatorCheck()
+    plugin = _check()
     result = plugin.check(bundle_dir, manifest)
     # With a tampered challenge token, the sender_signature recomputation MUST fail.
     assert result.ok is False
@@ -468,7 +484,7 @@ def test_challenge_token_swapped_breaks_sig(tmp_path):
     # Swap challenge_token without re-signing
     edge["receiver_challenge_token"] = (b"\xbb" * 16).hex()
     bundle_dir, manifest = _make_manifest_with_causal_chain(tmp_path, [edge])
-    plugin = CrossHostPeerReviewAuthenticatorCheck()
+    plugin = _check()
     result = plugin.check(bundle_dir, manifest)
     assert result.ok is False
 
@@ -487,7 +503,7 @@ def test_challenge_token_replay_across_messages(tmp_path):
     # edge2 reuses the same receiver_challenge_token as edge1 → nonce reuse.
     assert edge1["receiver_challenge_token"] == edge2["receiver_challenge_token"]
     bundle_dir, manifest = _make_manifest_with_causal_chain(tmp_path, [edge1, edge2])
-    plugin = CrossHostPeerReviewAuthenticatorCheck()
+    plugin = _check()
     result = plugin.check(bundle_dir, manifest)
     assert result.ok is False
     assert "CHALLENGE" in result.reason_code or "REPLAY" in result.reason_code
@@ -505,7 +521,7 @@ def test_ack_timestamp_evidence_kind_roughtime_quorum_well_formed(tmp_path):
     """
     edge = _make_edge_dict()
     bundle_dir, manifest = _make_manifest_with_causal_chain(tmp_path, [edge])
-    plugin = CrossHostPeerReviewAuthenticatorCheck()
+    plugin = _check()
     result = plugin.check(bundle_dir, manifest)
     assert result.ok is True
     assert result.reason_code == "PASS"
@@ -539,7 +555,7 @@ def test_ack_timestamp_evidence_kind_rfc3161_tsa_well_formed(tmp_path):
         },
     }
     bundle_dir, manifest = _make_manifest_with_causal_chain(tmp_path, [edge])
-    plugin = CrossHostPeerReviewAuthenticatorCheck()
+    plugin = _check()
     result = plugin.check(bundle_dir, manifest)
     assert result.ok is True
     assert result.reason_code == "PASS"
@@ -558,7 +574,7 @@ def test_ack_timestamp_evidence_unknown_kind_hard_fails(tmp_path):
         "tdx_attestation_v2": {"quote": "deadbeef"},
     }
     bundle_dir, manifest = _make_manifest_with_causal_chain(tmp_path, [edge])
-    plugin = CrossHostPeerReviewAuthenticatorCheck()
+    plugin = _check()
     result = plugin.check(bundle_dir, manifest)
     assert result.ok is False
     assert result.reason_code == "ACK_TIMESTAMP_EVIDENCE_UNKNOWN_KIND"
@@ -574,7 +590,7 @@ def test_send_timestamp_evidence_unknown_kind_hard_fails(tmp_path):
         "tee_counter": {},
     }
     bundle_dir, manifest = _make_manifest_with_causal_chain(tmp_path, [edge])
-    plugin = CrossHostPeerReviewAuthenticatorCheck()
+    plugin = _check()
     result = plugin.check(bundle_dir, manifest)
     assert result.ok is False
     assert result.reason_code == "SEND_TIMESTAMP_EVIDENCE_UNKNOWN_KIND"
@@ -592,7 +608,7 @@ def test_ack_timestamp_evidence_missing_when_profile_requires_unverifiable_edge(
     bundle_dir, manifest = _make_manifest_with_causal_chain(
         tmp_path, [edge], profile="production-standard"
     )
-    plugin = CrossHostPeerReviewAuthenticatorCheck()
+    plugin = _check()
     result = plugin.check(bundle_dir, manifest)
     assert result.ok is False
     # edge_state in the per-edge output must be UNVERIFIABLE_EDGE.
@@ -615,7 +631,7 @@ def test_ack_timestamp_evidence_sha1_imprint_rejected(tmp_path):
         },
     }
     bundle_dir, manifest = _make_manifest_with_causal_chain(tmp_path, [edge])
-    plugin = CrossHostPeerReviewAuthenticatorCheck()
+    plugin = _check()
     result = plugin.check(bundle_dir, manifest)
     assert result.ok is False
     assert result.reason_code == "TSA_WEAK_ALGORITHM"
@@ -632,7 +648,7 @@ def test_ack_timeout_zero_rejected_framing_attack(tmp_path):
     """
     edge = _make_edge_dict(ack_timeout_ms=0)
     bundle_dir, manifest = _make_manifest_with_causal_chain(tmp_path, [edge])
-    plugin = CrossHostPeerReviewAuthenticatorCheck()
+    plugin = _check()
     result = plugin.check(bundle_dir, manifest)
     assert result.ok is False
     assert result.reason_code == "ACK_TIMEOUT_OUT_OF_PROFILE_BOUNDS"
@@ -645,7 +661,7 @@ def test_ack_timeout_unbounded_rejected_indefinite_disputed_hold(tmp_path):
     # production-standard max is 60_000 — choose 10**12 as effectively-infinity.
     edge = _make_edge_dict(ack_timeout_ms=10**12)
     bundle_dir, manifest = _make_manifest_with_causal_chain(tmp_path, [edge])
-    plugin = CrossHostPeerReviewAuthenticatorCheck()
+    plugin = _check()
     result = plugin.check(bundle_dir, manifest)
     assert result.ok is False
     assert result.reason_code == "ACK_TIMEOUT_OUT_OF_PROFILE_BOUNDS"
@@ -657,7 +673,7 @@ def test_ack_timeout_below_profile_min_rejected(tmp_path):
     bundle_dir, manifest = _make_manifest_with_causal_chain(
         tmp_path, [edge], profile="production-standard"
     )
-    plugin = CrossHostPeerReviewAuthenticatorCheck()
+    plugin = _check()
     result = plugin.check(bundle_dir, manifest)
     assert result.ok is False
     assert result.reason_code == "ACK_TIMEOUT_OUT_OF_PROFILE_BOUNDS"
@@ -669,7 +685,7 @@ def test_ack_timeout_above_profile_max_rejected(tmp_path):
     bundle_dir, manifest = _make_manifest_with_causal_chain(
         tmp_path, [edge], profile="regulated-high-assurance"
     )
-    plugin = CrossHostPeerReviewAuthenticatorCheck()
+    plugin = _check()
     result = plugin.check(bundle_dir, manifest)
     assert result.ok is False
     assert result.reason_code == "ACK_TIMEOUT_OUT_OF_PROFILE_BOUNDS"
@@ -681,7 +697,7 @@ def test_ack_timeout_at_profile_min_accepted(tmp_path):
     bundle_dir, manifest = _make_manifest_with_causal_chain(
         tmp_path, [edge], profile="production-standard"
     )
-    plugin = CrossHostPeerReviewAuthenticatorCheck()
+    plugin = _check()
     result = plugin.check(bundle_dir, manifest)
     assert result.ok is True
 
@@ -692,7 +708,7 @@ def test_ack_timeout_at_profile_max_accepted(tmp_path):
     bundle_dir, manifest = _make_manifest_with_causal_chain(
         tmp_path, [edge], profile="production-standard"
     )
-    plugin = CrossHostPeerReviewAuthenticatorCheck()
+    plugin = _check()
     result = plugin.check(bundle_dir, manifest)
     assert result.ok is True
 
@@ -713,7 +729,7 @@ def test_ack_timeout_table_is_hardcoded_in_module_not_bundle(tmp_path):
     manifest.causal_chain["_override_ack_timeout_bounds_ms"] = {
         "production-standard": [0, 10**18],
     }
-    plugin = CrossHostPeerReviewAuthenticatorCheck()
+    plugin = _check()
     result = plugin.check(bundle_dir, manifest)
     assert result.ok is False
     assert result.reason_code == "ACK_TIMEOUT_OUT_OF_PROFILE_BOUNDS"
@@ -746,7 +762,7 @@ def test_trusted_edge_advances_causal_frontier(tmp_path):
     """
     edge = _make_edge_dict()
     bundle_dir, manifest = _make_manifest_with_causal_chain(tmp_path, [edge])
-    plugin = CrossHostPeerReviewAuthenticatorCheck()
+    plugin = _check()
     result = plugin.check(bundle_dir, manifest)
     assert result.ok is True
     update = compute_causal_chain_update(
@@ -767,7 +783,7 @@ def test_disputed_edge_does_not_advance_frontier(tmp_path):
     edge["ack_timestamp_evidence"] = None
     edge["timeout_witness"] = None
     bundle_dir, manifest = _make_manifest_with_causal_chain(tmp_path, [edge])
-    plugin = CrossHostPeerReviewAuthenticatorCheck()
+    plugin = _check()
     result = plugin.check(bundle_dir, manifest)
     assert result.ok is False
     assert "DISPUTED_EDGE" in result.reason_code or "DISPUTED_EDGE" in result.detail
@@ -781,7 +797,7 @@ def test_unverifiable_edge_does_not_advance_frontier(tmp_path):
     edge["ack_timestamp_evidence"] = None
     edge["timeout_witness"] = {"_test_only_present": True}
     bundle_dir, manifest = _make_manifest_with_causal_chain(tmp_path, [edge])
-    plugin = CrossHostPeerReviewAuthenticatorCheck()
+    plugin = _check()
     result = plugin.check(bundle_dir, manifest)
     assert result.ok is False
     assert (
@@ -809,7 +825,7 @@ def test_ack_timeliness_violation_does_not_advance_frontier(tmp_path):
         1_000_000_000 + 60_000
     )
     bundle_dir, manifest = _make_manifest_with_causal_chain(tmp_path, [edge])
-    plugin = CrossHostPeerReviewAuthenticatorCheck()
+    plugin = _check()
     result = plugin.check(bundle_dir, manifest)
     assert result.ok is False
     assert (
@@ -852,7 +868,7 @@ def test_three_non_trusted_states_share_same_frontier_consequence(
             1_000_000_000 + 60_000
         )
     bundle_dir, manifest = _make_manifest_with_causal_chain(tmp_path, [edge])
-    plugin = CrossHostPeerReviewAuthenticatorCheck()
+    plugin = _check()
     result = plugin.check(bundle_dir, manifest)
     assert result.ok is False
     assert expected_state in result.reason_code or expected_state in result.detail
@@ -867,7 +883,7 @@ def test_hmac_authenticator_accepted_single_org(tmp_path):
     """R4-ADD-4: kind=HMAC + deployment_scope=SINGLE_ORG → accepted."""
     edge = _make_edge_dict(authenticator_kind="hmac", deployment_scope="single_org")
     bundle_dir, manifest = _make_manifest_with_causal_chain(tmp_path, [edge])
-    plugin = CrossHostPeerReviewAuthenticatorCheck()
+    plugin = _check()
     result = plugin.check(bundle_dir, manifest)
     assert result.ok is True
 
@@ -878,7 +894,7 @@ def test_hmac_authenticator_rejected_cross_org_profile_mismatch(tmp_path):
     """
     edge = _make_edge_dict(authenticator_kind="hmac", deployment_scope="cross_org")
     bundle_dir, manifest = _make_manifest_with_causal_chain(tmp_path, [edge])
-    plugin = CrossHostPeerReviewAuthenticatorCheck()
+    plugin = _check()
     result = plugin.check(bundle_dir, manifest)
     assert result.ok is False
     assert result.reason_code == "CROSS_HOST_AUTH_PROFILE_MISMATCH"
@@ -962,7 +978,7 @@ def test_cose_sign1_fails_closed_without_pinned_policy(tmp_path):
     for scope in ("cross_org", "single_org"):
         edge = _make_edge_dict(authenticator_kind="cose_sign1", deployment_scope=scope)
         bundle_dir, manifest = _make_manifest_with_causal_chain(tmp_path, [edge])
-        plugin = CrossHostPeerReviewAuthenticatorCheck()  # no policy
+        plugin = CrossHostPeerReviewAuthenticatorCheck(None)  # no policy
         result = plugin.check(bundle_dir, manifest)
         assert result.ok is False
         assert result.reason_code == "CROSS_HOST_KEY_NOT_PINNED"
@@ -1015,7 +1031,7 @@ def test_sender_local_counter_non_decreasing(tmp_path):
         sender_local_counter=1,  # decreasing
     )
     bundle_dir, manifest = _make_manifest_with_causal_chain(tmp_path, [edge1, edge2])
-    plugin = CrossHostPeerReviewAuthenticatorCheck()
+    plugin = _check()
     result = plugin.check(bundle_dir, manifest)
     assert result.ok is False
     assert "COUNTER" in result.reason_code
@@ -1031,7 +1047,7 @@ def test_receiver_local_counter_non_decreasing(tmp_path):
         receiver_local_counter=1,  # decreasing
     )
     bundle_dir, manifest = _make_manifest_with_causal_chain(tmp_path, [edge1, edge2])
-    plugin = CrossHostPeerReviewAuthenticatorCheck()
+    plugin = _check()
     result = plugin.check(bundle_dir, manifest)
     assert result.ok is False
     assert "COUNTER" in result.reason_code
@@ -1044,7 +1060,7 @@ def test_channel_id_binds_jointly_logged_channel_config(tmp_path):
     edge = _make_edge_dict()
     edge["channel_id"] = "99999999-9999-9999-9999-999999999999"  # tampered
     bundle_dir, manifest = _make_manifest_with_causal_chain(tmp_path, [edge])
-    plugin = CrossHostPeerReviewAuthenticatorCheck()
+    plugin = _check()
     result = plugin.check(bundle_dir, manifest)
     assert result.ok is False
 
@@ -1066,7 +1082,7 @@ def test_misbehavior_irrefutable_via_paired_log_entries(tmp_path):
     edge = _make_edge_dict()
     edge["message_hash"] = _sha256(b"adversary-mutated payload").hex()
     bundle_dir, manifest = _make_manifest_with_causal_chain(tmp_path, [edge])
-    plugin = CrossHostPeerReviewAuthenticatorCheck()
+    plugin = _check()
     result = plugin.check(bundle_dir, manifest)
     assert result.ok is False
 
@@ -1079,8 +1095,12 @@ def test_sender_cannot_forge_ack_without_receiver_key(tmp_path):
     reject on HMAC mismatch.
     """
     edge = _make_edge_dict()
-    # Re-sign ack under sender's key (wrong)
-    sender_K = bytes.fromhex(edge["sender_signature"]["_test_only_K_send_hex"])
+    # Re-sign ack under the SENDER's key (wrong): the sender holds its own IKM and
+    # can derive K_send, but not the receiver's K_ack. (The key used to come out of
+    # the edge itself; now it is derived the way the sender would derive it.)
+    sender_K = derive_cross_host_receipt_key(
+        sender_signing_key_material=_SENDER_IKM, info_label=_CTX_SENDER_LABEL
+    )
     ack_preimage = construct_ack_preimage(
         sender_host_id=edge["sender_host_id"],
         receiver_host_id=edge["receiver_host_id"],
@@ -1097,10 +1117,10 @@ def test_sender_cannot_forge_ack_without_receiver_key(tmp_path):
     )
     forged_ack = sign_cross_host_authenticator(K=sender_K, preimage=ack_preimage)
     edge["receiver_acknowledgment"]["sig"] = forged_ack.hex()
-    # Keep the correct ack K available so the verifier reads it — but the
-    # forged sig won't verify under the receiver's K.
+    # The verifier derives K_ack from ITS pinned receiver IKM; the forged sig
+    # does not verify under it.
     bundle_dir, manifest = _make_manifest_with_causal_chain(tmp_path, [edge])
-    plugin = CrossHostPeerReviewAuthenticatorCheck()
+    plugin = _check()
     result = plugin.check(bundle_dir, manifest)
     assert result.ok is False
     assert (
@@ -1136,7 +1156,7 @@ def test_legacy_bundle_with_causal_chain_none_passes(tmp_path):
         typed_checks=[],
         causal_chain=None,
     )
-    plugin = CrossHostPeerReviewAuthenticatorCheck()
+    plugin = _check()
     result = plugin.check(bundle_dir, manifest)
     assert result.ok is True
     assert result.reason_code == "PASS"
@@ -1151,7 +1171,7 @@ def test_bundle_with_causal_chain_no_cross_host_authenticators_passes(tmp_path):
     # Add some unrelated causal_chain content
     assert manifest.causal_chain is not None
     manifest.causal_chain["layer_a"] = {"events": []}
-    plugin = CrossHostPeerReviewAuthenticatorCheck()
+    plugin = _check()
     result = plugin.check(bundle_dir, manifest)
     assert result.ok is True
     assert result.reason_code == "PASS"
@@ -1164,7 +1184,7 @@ def test_bundle_with_causal_chain_no_cross_host_authenticators_passes(tmp_path):
 def test_empty_cross_host_authenticators_list_passes(tmp_path):
     """Edge case: cross_host_authenticators is present but empty list → PASS."""
     bundle_dir, manifest = _make_manifest_with_causal_chain(tmp_path, edges=[])
-    plugin = CrossHostPeerReviewAuthenticatorCheck()
+    plugin = _check()
     result = plugin.check(bundle_dir, manifest)
     assert result.ok is True
 
@@ -1223,7 +1243,7 @@ def test_full_bilateral_collusion_is_documented_limitation_not_a_crash(tmp_path)
     # All inputs valid — even though semantically the hosts could be colluding,
     # the plugin sees a TRUSTED edge.
     bundle_dir, manifest = _make_manifest_with_causal_chain(tmp_path, [edge])
-    plugin = CrossHostPeerReviewAuthenticatorCheck()
+    plugin = _check()
     result = plugin.check(bundle_dir, manifest)
     assert result.ok is True
     # The documented-limitation string MUST appear in the detail/advisory
@@ -1249,7 +1269,7 @@ def test_edge_timestamp_default_mode_accepts_shape_only_with_disclosure(tmp_path
     """
     edge = _make_edge_dict()  # default send/ack evidence carries no srep_bytes_b64
     bundle_dir, manifest = _make_manifest_with_causal_chain(tmp_path, [edge])
-    result = CrossHostPeerReviewAuthenticatorCheck().check(bundle_dir, manifest)
+    result = _check().check(bundle_dir, manifest)
     assert result.ok is True
     assert "not crypto-verified" in result.detail.lower()
 
@@ -1263,9 +1283,7 @@ def test_edge_timestamp_strict_mode_rejects_shape_only_unverified(tmp_path):
     """
     edge = _make_edge_dict()
     bundle_dir, manifest = _make_manifest_with_causal_chain(tmp_path, [edge])
-    result = CrossHostPeerReviewAuthenticatorCheck(
-        require_verified_edge_timestamps=True
-    ).check(bundle_dir, manifest)
+    result = _check(require_verified_edge_timestamps=True).check(bundle_dir, manifest)
     assert result.ok is False
     assert "EDGE_TIMESTAMP_UNVERIFIED" in result.reason_code
 
@@ -1295,11 +1313,9 @@ def test_edge_timestamp_strict_mode_rejects_backdated_2009(tmp_path):
     )
     bundle_dir, manifest = _make_manifest_with_causal_chain(tmp_path, [edge])
     # Default verifier accepts the back-dated clock (the disclosed gap).
-    assert CrossHostPeerReviewAuthenticatorCheck().check(bundle_dir, manifest).ok
+    assert _check().check(bundle_dir, manifest).ok
     # Strict verifier rejects it.
-    result = CrossHostPeerReviewAuthenticatorCheck(
-        require_verified_edge_timestamps=True
-    ).check(bundle_dir, manifest)
+    result = _check(require_verified_edge_timestamps=True).check(bundle_dir, manifest)
     assert result.ok is False
     assert "EDGE_TIMESTAMP_UNVERIFIED" in result.reason_code
 
@@ -1315,7 +1331,7 @@ def test_edge_timestamp_strict_mode_rejects_backdated_2009(tmp_path):
 def test_pass_carries_reference_grade_disclosure_default_mode(tmp_path):
     edge = _make_edge_dict()
     bundle_dir, manifest = _make_manifest_with_causal_chain(tmp_path, [edge])
-    plugin = CrossHostPeerReviewAuthenticatorCheck()
+    plugin = _check()
     result = plugin.check(bundle_dir, manifest)
     assert result.ok is True and result.reason_code == "PASS"
     joined = "\n".join(result.disclosures)
@@ -1331,7 +1347,310 @@ def test_pass_carries_reference_grade_disclosure_default_mode(tmp_path):
 def test_legacy_none_causal_chain_pass_has_no_disclosures(tmp_path):
     """No cross-host evidence was trusted -> no residual to disclose."""
     bundle_dir, manifest = _make_manifest_with_causal_chain(tmp_path, None)
-    plugin = CrossHostPeerReviewAuthenticatorCheck()
+    plugin = _check()
     result = plugin.check(bundle_dir, manifest)
     assert result.ok is True
     assert getattr(result, "disclosures", ()) == ()
+
+
+# ===========================================================================
+# GROUP K — key provenance: the verifier's key never comes from the edge
+# ===========================================================================
+
+
+def _attacker_mints_edge_with_own_keys(**overrides):
+    """An attacker who controls bundle bytes: signs with keys the verifier never
+    pinned and (pre-fix) shipped them in the edge for the verifier to use."""
+    K_send = derive_cross_host_receipt_key(
+        sender_signing_key_material=b"\xee" * 32, info_label=_CTX_SENDER_LABEL
+    )
+    K_ack = derive_cross_host_receipt_key(
+        sender_signing_key_material=b"\xdd" * 32, info_label=_CTX_ACK_LABEL
+    )
+    edge = _make_edge_dict(**overrides)
+    sender_preimage = construct_sender_signature_preimage(
+        sender_host_id=edge["sender_host_id"],
+        receiver_host_id=edge["receiver_host_id"],
+        channel_id=edge["channel_id"],
+        message_id=edge["message_id"],
+        message_hash=bytes.fromhex(edge["message_hash"]),
+        sender_local_counter=edge["sender_local_counter"],
+        ack_timeout_ms=edge["ack_timeout_ms"],
+        bundle_id=edge["bundle_id"],
+        receiver_challenge_token=bytes.fromhex(edge["receiver_challenge_token"]),
+    )
+    ack_preimage = construct_ack_preimage(
+        sender_host_id=edge["sender_host_id"],
+        receiver_host_id=edge["receiver_host_id"],
+        channel_id=edge["channel_id"],
+        message_id=edge["message_id"],
+        message_hash=bytes.fromhex(edge["message_hash"]),
+        receiver_local_counter=edge["receiver_local_counter"],
+        kind="ack",
+        reason_code_if_nack=None,
+        bundle_id=edge["bundle_id"],
+        ack_timeout_ms=edge["ack_timeout_ms"],
+        sender_local_counter=edge["sender_local_counter"],
+        receiver_challenge_token=bytes.fromhex(edge["receiver_challenge_token"]),
+    )
+    edge["sender_signature"]["sig"] = sign_cross_host_authenticator(
+        K=K_send, preimage=sender_preimage
+    ).hex()
+    edge["receiver_acknowledgment"]["sig"] = sign_cross_host_authenticator(
+        K=K_ack, preimage=ack_preimage
+    ).hex()
+    return edge, K_send, K_ack
+
+
+_CTX_SENDER_LABEL = "nexi/audit/v0.3/cross-host-receipt"
+_CTX_ACK_LABEL = "nexi/audit/v0.3/cross-host-receipt-ack"
+
+
+def test_K1_pinned_ikm_verifies_the_honest_edge(tmp_path: Path):
+    bundle_dir, manifest = _make_manifest_with_causal_chain(
+        tmp_path, [_make_edge_dict()]
+    )
+    result = _check().check(bundle_dir, manifest)
+    assert result.ok is True, result
+
+
+def test_K2_the_original_attack_self_minted_keys_shipped_in_the_edge(tmp_path: Path):
+    """Pre-fix: valid MAC under a key the edge itself supplies -> PASS.
+    Now: key material inside the artifact is refused outright, before any MAC
+    check — the presence of the field is the finding."""
+    edge, K_send, K_ack = _attacker_mints_edge_with_own_keys()
+    edge["sender_signature"]["_test_only_K_send_hex"] = K_send.hex()
+    edge["receiver_acknowledgment"]["_test_only_K_ack_hex"] = K_ack.hex()
+    bundle_dir, manifest = _make_manifest_with_causal_chain(tmp_path, [edge])
+    result = _check().check(bundle_dir, manifest)
+    assert result.ok is False
+    assert result.reason_code == "CROSS_HOST_KEY_MATERIAL_IN_BUNDLE", result
+
+
+def test_K3_self_minted_keys_without_the_field_fail_the_mac(tmp_path: Path):
+    """Same forgery, field stripped: the verifier derives K from ITS pinned IKM,
+    so the attacker's MAC does not verify."""
+    edge, _, _ = _attacker_mints_edge_with_own_keys()
+    bundle_dir, manifest = _make_manifest_with_causal_chain(tmp_path, [edge])
+    result = _check().check(bundle_dir, manifest)
+    assert result.ok is False
+    assert result.reason_code == "SENDER_SIGNATURE_VERIFICATION_FAILED", result
+
+
+def test_K4_no_policy_is_fail_closed_not_pass(tmp_path: Path):
+    bundle_dir, manifest = _make_manifest_with_causal_chain(
+        tmp_path, [_make_edge_dict()]
+    )
+    result = CrossHostPeerReviewAuthenticatorCheck(None).check(bundle_dir, manifest)
+    assert result.ok is False
+    assert result.reason_code == "SENDER_KEY_MATERIAL_UNAVAILABLE", result
+
+
+def test_K5_unpinned_key_id_is_fail_closed(tmp_path: Path):
+    edge = _make_edge_dict()
+    edge["sender_signature"]["key_id"] = "sender-key-9"
+    bundle_dir, manifest = _make_manifest_with_causal_chain(tmp_path, [edge])
+    result = _check().check(bundle_dir, manifest)
+    assert result.ok is False
+    assert result.reason_code == "SENDER_KEY_MATERIAL_UNAVAILABLE", result
+
+
+def test_K6_missing_key_id_is_fail_closed(tmp_path: Path):
+    edge = _make_edge_dict()
+    del edge["sender_signature"]["key_id"]
+    bundle_dir, manifest = _make_manifest_with_causal_chain(tmp_path, [edge])
+    result = _check().check(bundle_dir, manifest)
+    assert result.ok is False
+    assert result.reason_code == "SENDER_KEY_MATERIAL_UNAVAILABLE", result
+
+
+def test_K7_ack_arm_is_symmetric(tmp_path: Path):
+    """Honest sender, attacker-minted ack: the ack MAC is checked under the
+    verifier's pinned receiver IKM and fails; and a shipped ack key is refused."""
+    edge, _, K_ack = _attacker_mints_edge_with_own_keys()
+    honest = _make_edge_dict()
+    edge["sender_signature"] = honest["sender_signature"]
+    bundle_dir, manifest = _make_manifest_with_causal_chain(tmp_path, [edge])
+    result = _check().check(bundle_dir, manifest)
+    assert result.ok is False
+    assert result.reason_code == "ACK_SIGNATURE_VERIFICATION_FAILED", result
+
+    edge["receiver_acknowledgment"]["_test_only_K_ack_hex"] = K_ack.hex()
+    bundle_dir, manifest = _make_manifest_with_causal_chain(tmp_path, [edge])
+    result = _check().check(bundle_dir, manifest)
+    assert result.ok is False
+    assert result.reason_code == "CROSS_HOST_KEY_MATERIAL_IN_BUNDLE", result
+
+
+def test_K8_ack_key_id_unpinned_is_fail_closed(tmp_path: Path):
+    edge = _make_edge_dict()
+    edge["receiver_acknowledgment"]["key_id"] = "receiver-key-9"
+    bundle_dir, manifest = _make_manifest_with_causal_chain(tmp_path, [edge])
+    result = _check().check(bundle_dir, manifest)
+    assert result.ok is False
+    assert result.reason_code == "RECEIVER_KEY_MATERIAL_UNAVAILABLE", result
+
+
+def test_K9_wrong_pinned_ikm_fails_the_mac(tmp_path: Path):
+    """The pinned IKM is load-bearing: a policy holding a different IKM under the
+    same key_id must NOT verify the honest edge (kills 'any pinned key passes')."""
+    other = CrossOrgKeyPolicy(
+        pinned_cose_keys={},
+        pinned_hmac_ikm={
+            b"sender-key-0": b"\x33" * 32,
+            b"receiver-key-0": _RECEIVER_IKM,
+        },
+    )
+    bundle_dir, manifest = _make_manifest_with_causal_chain(
+        tmp_path, [_make_edge_dict()]
+    )
+    result = CrossHostPeerReviewAuthenticatorCheck(other).check(bundle_dir, manifest)
+    assert result.ok is False
+    assert result.reason_code == "SENDER_SIGNATURE_VERIFICATION_FAILED", result
+
+
+# ===========================================================================
+# GROUP L — fresh-context audit closures (2026-09-02)
+# ===========================================================================
+
+
+def _signed_edge_evidence(edge, *, send_midp, ack_midp, radi, monkeypatch):
+    """Replace the edge's shape-only timestamp evidence with REAL signed SREPs
+    (3 pinned test roots) whose NONC binds to this edge's send / ack preimage."""
+    from audit_bundle.extensions.c19 import tsa_roughtime_bls as tb
+    from tests.fixtures.c19c import mint_fixtures as fx
+
+    monkeypatch.setattr(
+        tb,
+        "_TEST_OVERRIDE_ROUGHTIME_ROOTS",
+        fx.make_test_pinned_roughtime_roots(),
+        raising=False,
+    )
+    send_pre = construct_sender_signature_preimage(
+        sender_host_id=edge["sender_host_id"],
+        receiver_host_id=edge["receiver_host_id"],
+        channel_id=edge["channel_id"],
+        message_id=edge["message_id"],
+        message_hash=bytes.fromhex(edge["message_hash"]),
+        sender_local_counter=edge["sender_local_counter"],
+        ack_timeout_ms=edge["ack_timeout_ms"],
+        bundle_id=edge["bundle_id"],
+        receiver_challenge_token=bytes.fromhex(edge["receiver_challenge_token"]),
+    )
+    ack_pre = construct_ack_preimage(
+        sender_host_id=edge["sender_host_id"],
+        receiver_host_id=edge["receiver_host_id"],
+        channel_id=edge["channel_id"],
+        message_id=edge["message_id"],
+        message_hash=bytes.fromhex(edge["message_hash"]),
+        receiver_local_counter=edge["receiver_local_counter"],
+        kind="ack",
+        reason_code_if_nack=None,
+        bundle_id=edge["bundle_id"],
+        ack_timeout_ms=edge["ack_timeout_ms"],
+        sender_local_counter=edge["sender_local_counter"],
+        receiver_challenge_token=bytes.fromhex(edge["receiver_challenge_token"]),
+    )
+    names = ["cloudflare-roughtime-2", "int08h-roughtime", "roughtime-se"]
+    for key, role, pre, midp in (
+        ("send_timestamp_evidence", "send", send_pre, send_midp),
+        ("ack_timestamp_evidence", "ack", ack_pre, ack_midp),
+    ):
+        nonce = tb._expected_roughtime_nonce(role, pre)
+        edge[key] = {
+            "kind": "roughtime_quorum",
+            "roughtime_quorum": {
+                "responses": [
+                    fx.mint_srep(root_name=n, midp_ms=midp, radi_ms=radi, nonce=nonce)
+                    for n in names
+                ],
+                "radius_ms": radi,
+                f"{role}_timestamp_midp": midp,
+            },
+        }
+    return edge
+
+
+def test_L1_strict_mode_deleting_the_unsigned_radius_does_not_buy_a_pass(
+    tmp_path, monkeypatch
+):
+    """Red-team witness w4: signed RADI=100 each side, ack 450 ms after send,
+    timeout 500 → the signed intervals violate the deadline. Deleting the unsigned
+    `radi_ms` from the envelope used to make step (9) grade RADI=0 → PASS."""
+    T0 = 1_000_000_000
+    edge = _make_edge_dict(ack_timeout_ms=500)
+    _signed_edge_evidence(
+        edge, send_midp=T0, ack_midp=T0 + 450, radi=100, monkeypatch=monkeypatch
+    )
+    bundle_dir, manifest = _make_manifest_with_causal_chain(tmp_path, [edge])
+    baseline = _check(require_verified_edge_timestamps=True).check(bundle_dir, manifest)
+    assert baseline.ok is False
+    assert baseline.reason_code == "ACK_TIMELINESS_VIOLATION", baseline
+
+    for key in ("send_timestamp_evidence", "ack_timestamp_evidence"):
+        for resp in edge[key]["roughtime_quorum"]["responses"]:
+            del resp["radi_ms"]
+    bundle_dir, manifest = _make_manifest_with_causal_chain(tmp_path, [edge])
+    degraded = _check(require_verified_edge_timestamps=True).check(bundle_dir, manifest)
+    assert degraded.ok is False
+    assert degraded.reason_code == "ACK_TIMELINESS_VIOLATION", degraded
+
+
+def test_L2_strict_mode_envelope_rewrite_is_refused(tmp_path, monkeypatch):
+    """Same signed evidence, envelope radius rewritten to 1: refused, never graded."""
+    T0 = 1_000_000_000
+    edge = _make_edge_dict(ack_timeout_ms=500)
+    _signed_edge_evidence(
+        edge, send_midp=T0, ack_midp=T0 + 450, radi=100, monkeypatch=monkeypatch
+    )
+    for resp in edge["ack_timestamp_evidence"]["roughtime_quorum"]["responses"]:
+        resp["radi_ms"] = 1
+    bundle_dir, manifest = _make_manifest_with_causal_chain(tmp_path, [edge])
+    result = _check(require_verified_edge_timestamps=True).check(bundle_dir, manifest)
+    assert result.ok is False
+    assert "PASS" != result.reason_code
+    assert "ENVELOPE" in result.reason_code or "ENVELOPE" in result.detail.upper(), (
+        result
+    )
+
+
+def test_L3_shape_only_mode_a_missing_radius_is_unverifiable_not_zero(tmp_path):
+    edge = _make_edge_dict()
+    del edge["ack_timestamp_evidence"]["roughtime_quorum"]["responses"][0]["radi_ms"]
+    bundle_dir, manifest = _make_manifest_with_causal_chain(tmp_path, [edge])
+    result = _check().check(bundle_dir, manifest)
+    assert result.ok is False
+    assert result.reason_code == "UNVERIFIABLE_EDGE", result
+
+
+def test_L4_authenticator_kind_is_a_closed_case_sensitive_vocabulary(tmp_path):
+    """Red-team witness w3: `HMAC` + cross_org missed the hmac/cross_org refusal
+    and fell into the HMAC arm anyway."""
+    edge = _make_edge_dict(authenticator_kind="HMAC", deployment_scope="cross_org")
+    bundle_dir, manifest = _make_manifest_with_causal_chain(tmp_path, [edge])
+    result = _check().check(bundle_dir, manifest)
+    assert result.ok is False
+    assert result.reason_code == "CROSS_HOST_AUTH_KIND_UNSUPPORTED", result
+
+
+def test_L5_key_material_is_refused_on_every_arm_before_routing(tmp_path):
+    """A cose_sign1 edge with NO policy carrying `_test_only_K_send_hex`: the
+    hoisted refusal fires before the no-policy gate would."""
+    edge = _make_edge_dict(
+        authenticator_kind="cose_sign1", deployment_scope="cross_org"
+    )
+    edge["sender_signature"]["_test_only_K_send_hex"] = "ab" * 32
+    bundle_dir, manifest = _make_manifest_with_causal_chain(tmp_path, [edge])
+    result = CrossHostPeerReviewAuthenticatorCheck(None).check(bundle_dir, manifest)
+    assert result.ok is False
+    assert result.reason_code == "CROSS_HOST_KEY_MATERIAL_IN_BUNDLE", result
+
+
+def test_L6_pass_face_names_where_the_keys_came_from(tmp_path):
+    bundle_dir, manifest = _make_manifest_with_causal_chain(
+        tmp_path, [_make_edge_dict()]
+    )
+    result = _check().check(bundle_dir, manifest)
+    assert result.ok is True
+    assert "pinned_hmac_ikm[key_id]" in result.detail
+    assert "no key read from the bundle" in result.detail

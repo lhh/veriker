@@ -55,10 +55,12 @@ boundary second it is revoked.
 
 This module is pure ``cryptography`` + stdlib + ``rfc8785``.
 It does NOT import ``emitter_premium``, ``dsse.envelope``, or any other
-audit_bundle submodule — with ONE deliberate exception: ``audit_bundle._freeze``,
-a stdlib-only leaf with zero audit_bundle imports of its own, used to deep-freeze
-``RevocationList.entries`` at construction. The no-cycles / standalone-
-auditability intent of this contract is preserved (audit the one extra file).
+audit_bundle submodule — with TWO deliberate exceptions, both stdlib-only leaves
+with zero audit_bundle imports of their own: ``audit_bundle._freeze`` (deep-freezes
+``RevocationList.entries`` at construction) and ``audit_bundle.strict_json`` (the
+one parser for producer bytes: duplicate keys, NaN, oversized ints refused). The
+no-cycles / standalone-auditability intent of this contract is preserved (audit
+the two extra files).
 """
 
 from __future__ import annotations
@@ -66,7 +68,6 @@ from __future__ import annotations
 import base64
 import binascii
 import hashlib
-import json
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -77,6 +78,7 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from ._freeze import deep_freeze
+from audit_bundle.strict_json import strict_json_loads
 
 __all__ = [
     "RevocationListInvalid",
@@ -289,8 +291,8 @@ def load_revocation_list(
 
     # --- Parse ---
     try:
-        doc: Any = json.loads(raw_bytes)
-    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        doc: Any = strict_json_loads(raw_bytes)
+    except (ValueError, UnicodeDecodeError) as exc:
         raise RevocationListInvalid(f"JSON parse error: {exc}") from exc
 
     if not isinstance(doc, dict):

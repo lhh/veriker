@@ -77,6 +77,12 @@ from audit_bundle.work_set import WorkSet  # noqa: E402
 KIT_PATH = _HERE / "auditor_kit.py"
 SPEC_PATH = _HERE / "spec_pinned" / "corner_load_equilibrium.spec.json"
 SPEC_SOURCES = (SPEC_PATH,)
+# The auditor's WORK-SET as a committed FILE, for the shipped CLI's --work-set
+# (verify.py prefills it). The library path keeps the DERIVED form below
+# (_work_set) so a channel added to the spec is pinned automatically; the
+# parity test in tests/test_corner_load_equilibrium_minimal.py holds the two
+# equal, so the file cannot drift from the spec without a red test.
+WORK_SET_PATH = _HERE / "spec_pinned" / "corner_load_equilibrium.work_set.json"
 
 # The one reason code a residual channel may carry and still be mineable. A
 # leg that timed out, raised, or could not compare did NOT establish a residual

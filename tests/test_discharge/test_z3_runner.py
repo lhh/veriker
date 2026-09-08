@@ -32,6 +32,8 @@ from audit_bundle.discharge.z3_runner import (
     pick_default_invoker,
 )
 
+from tests._optional_deps import requires_z3
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -104,6 +106,7 @@ def test_fake_invoker_exhausted_raises():
 # ============================================================================
 
 
+@requires_z3
 def test_in_process_invoker_proves_trivial_tautology():
     """The negation `(not (= (+ 0 x) x))` is unsat for all Int x → DISCHARGED."""
     inv = InProcessZ3Invoker()
@@ -112,6 +115,7 @@ def test_in_process_invoker_proves_trivial_tautology():
     assert out.invoker_kind == "in_process"
 
 
+@requires_z3
 def test_in_process_invoker_finds_counterexample_to_false_claim():
     """The negation of `(= x (+ x 1))` is sat (any x is a counterexample)
     → FAILED (refinement claim is false)."""
@@ -120,6 +124,7 @@ def test_in_process_invoker_finds_counterexample_to_false_claim():
     assert out.status is Z3Status.FAILED, out.raw_output
 
 
+@requires_z3
 def test_in_process_invoker_handles_parse_error():
     inv = InProcessZ3Invoker()
     out = inv.run("(this is not valid smt-lib", timeout_s=5.0)
@@ -259,6 +264,7 @@ def test_adversarial_nondeterminism_does_not_silent_retry():
 # ============================================================================
 
 
+@requires_z3
 def test_adversarial_parse_error_surfaces_as_subprocess_failure():
     inv = InProcessZ3Invoker()
     # Genuinely malformed: undefined sort (Z3 emits a parse error).

@@ -62,6 +62,9 @@ _OUTPUT_IDS = {
     "corner_load_vertical_residual": "corner_load_vertical_residual",
     "corner_load_pitch_residual": "corner_load_pitch_residual",
     "corner_load_roll_residual": "corner_load_roll_residual",
+    # Channel 4. Not a residual: it claims that no sample's front/rear transfer
+    # split exceeded the auditor's tolerance against an offline calibration.
+    "corner_load_transfer_split_residual": "corner_load_transfer_split_residual",
 }
 
 # Vehicle parameters as exact decimal STRINGS. The first six are rigid-body

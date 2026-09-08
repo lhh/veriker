@@ -46,10 +46,10 @@ from __future__ import annotations
 
 import csv
 import hashlib
-import json
 from pathlib import Path
 
 from ...admission import InputInadmissible, admit_bytes
+from ...strict_json import strict_json_loads
 from ...plugin import ParsedInputs, RecomputedValue
 from ..registry import register_primitive
 
@@ -125,7 +125,7 @@ def compute_result_sha(query_bytes: bytes, sales_bytes: bytes) -> str:
     breach = admit_bytes(query_bytes, check_name="tabular_query_admission")
     if breach is not None:
         raise InputInadmissible(breach)
-    query: dict = json.loads(query_bytes.decode("utf-8"))
+    query: dict = strict_json_loads(query_bytes)
 
     reader = csv.DictReader(sales_bytes.decode("utf-8").splitlines())
     input_rows: list[dict] = list(reader)

@@ -50,6 +50,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 )
 
 from audit_bundle.bundle_manifest import register_typed_check
+from audit_bundle.iso8601 import parse_iso8601_utc_ms
 from audit_bundle.extensions.c19.offline_root import (
     COSE_PROTECTED_HEADER_MAX_BYTES,
     OFFLINE_ROOT_COSE_ALG_EDDSA,
@@ -822,23 +823,53 @@ def _check_timestamp_evidence_shape(
 
 
 def _extract_send_bound_ms(ev: dict) -> tuple[int, int]:
-    """Return (midp_ms, radi_ms) extracted from VALIDATED server responses
-    (informational mirror fields are ignored).
+    """Return (midp_ms, radi_ms) for the RADI-bounded timeliness inequality.
+
+    Roughtime: when the first response carries a signed SREP (`srep_bytes_b64`)
+    the values are the SIGNED inner MIDP / RADI (`tsa_roughtime_bls._signed_midp_radi`);
+    an unsigned `midp_ms` / `radi_ms` envelope copy beside it, if present, must
+    agree. Without signed bytes (the v0.3 shape-only evidence, a self-asserted
+    clock — see §OF-4) BOTH `midp_ms` and `radi_ms` must be present integers:
+    a missing radius is a `KeyError` (→ UNVERIFIABLE_EDGE), never a default of
+    zero. Until 2026-09-02 this read the envelope in every mode and defaulted
+    an absent `radi_ms` to 0, so deleting the field bought the most favourable
+    bound in both directions — even in strict mode, one step after the SREP
+    signature had been verified.
     """
     kind = ev.get("kind")
     if kind == "roughtime_quorum":
         rq = ev["roughtime_quorum"]
         resp = rq["responses"][0]
-        return int(resp["midp_ms"]), int(resp.get("radi_ms", 0))
+        if not isinstance(resp, dict):
+            raise ValueError("roughtime response is not an object")
+        if "srep_bytes_b64" in resp:
+            from audit_bundle.extensions.c19.tsa_roughtime_bls import (
+                C19LayerBError,
+                _signed_midp_radi,
+            )
+
+            try:
+                midp, radi = _signed_midp_radi(resp)
+            except C19LayerBError as exc:
+                raise ValueError(f"signed SREP unreadable: {exc}") from exc
+            for outer_key, signed_value in (("midp_ms", midp), ("radi_ms", radi)):
+                if outer_key in resp and resp[outer_key] != signed_value:
+                    raise ValueError(
+                        f"unsigned {outer_key}={resp[outer_key]!r} disagrees with "
+                        f"the signed SREP value {signed_value}"
+                    )
+            return midp, radi
+        midp_raw, radi_raw = resp["midp_ms"], resp["radi_ms"]  # KeyError if absent
+        if isinstance(midp_raw, bool) or isinstance(radi_raw, bool):
+            raise ValueError("midp_ms/radi_ms must be integers, not booleans")
+        return int(midp_raw), int(radi_raw)
     if kind == "rfc3161_tsa":
         # RFC 3161 genTime is point-in-time; no RADI. Parse iso8601 to ms.
         tsa = ev["rfc3161_tsa"]
         gentime = tsa.get("send_timestamp_gentime") or tsa.get("ack_timestamp_gentime")
-        from datetime import datetime, timezone
-
-        dt = datetime.fromisoformat(gentime.replace("Z", "+00:00"))
-        ms = int(dt.replace(tzinfo=timezone.utc).timestamp() * 1000)
-        return ms, 0
+        # Refuses a naive genTime and CONVERTS an explicit offset; the prior
+        # inline `replace(tzinfo=utc)` silently discarded a `+09:00`.
+        return parse_iso8601_utc_ms(gentime), 0
     raise ValueError(f"cannot extract bound from kind={kind!r}")
 
 
@@ -1099,6 +1130,86 @@ class CrossHostPeerReviewAuthenticatorCheck:
         self.cross_org_policy = cross_org_policy
         self.require_verified_edge_timestamps = require_verified_edge_timestamps
 
+    # Fields under which a producer once shipped the verifier's own MAC key inside
+    # the edge. Their PRESENCE is refused before any MAC is checked: key material
+    # in the artifact under verdict is a producer statement the verifier must
+    # never act on, and silently ignoring the field would let an old producer
+    # keep emitting it unnoticed.
+    _KEY_MATERIAL_FIELDS: frozenset[str] = frozenset(
+        {"_test_only_K_send_hex", "_test_only_K_ack_hex"}
+    )
+
+    def _key_provenance_face(self, edges) -> str:
+        """One clause for the PASS face naming WHERE every key came from."""
+        n_hmac = sum(1 for e in edges if e.get("authenticator_kind", "hmac") == "hmac")
+        n_cose = len(edges) - n_hmac
+        return (
+            f"hmac={n_hmac} via verifier-pinned CrossOrgKeyPolicy.pinned_hmac_ikm[key_id] "
+            f"(HKDF per role), cose_sign1={n_cose} via verifier-pinned kid→host policy; "
+            "no key read from the bundle"
+        )
+
+    def _hmac_key_for(
+        self, sig_field, *, role: str, info_label: str, idx: int
+    ) -> tuple[bytes | None, tuple[str, str] | None]:
+        """Derive the single-org HMAC key for `role` from the VERIFIER's pinned IKM.
+
+        The edge names its `key_id`; the verifier looks that kid up in
+        `cross_org_policy.pinned_hmac_ikm` (constructor-supplied, never read
+        from the bundle) and HKDF-expands it under the per-role label
+        (`_CTX_SENDER` for the sender authenticator, `_CTX_ACK` for the
+        acknowledgment — the same derivation the canonical
+        `verify_cross_host_edge_authenticator` performs). Returns `(K, None)`,
+        or `(None, (failure_kind, detail))` with `failure_kind` in
+        {"material", "unavailable"} — the CALL SITE binds the reason code as a
+        literal so the reason-code census sees it: "material" when the edge
+        carries key material itself; "unavailable" when there is no policy, no
+        string `key_id`, or the kid is not pinned for HMAC. All fail closed.
+
+        Until 2026-09-02 this arm read `_test_only_K_send_hex` /
+        `_test_only_K_ack_hex` OUT OF THE EDGE and verified the MAC under it —
+        an identity check for anyone who controls the bundle bytes, in a
+        registered typed check.
+        """
+        if not isinstance(sig_field, dict):
+            return None, (
+                "unavailable",
+                f"edge[{idx}]: {role} authenticator is not an object",
+            )
+        shipped = sorted(self._KEY_MATERIAL_FIELDS & set(sig_field))
+        if shipped:
+            return None, (
+                "material",
+                f"edge[{idx}]: {role} authenticator carries key material {shipped} "
+                "inside the bundle; the verifier's HMAC key comes only from its "
+                "pinned policy, and an artifact that supplies its own verification "
+                "key is refused, not verified",
+            )
+        policy = self.cross_org_policy
+        key_id = sig_field.get("key_id")
+        if policy is None or not isinstance(key_id, str) or not key_id:
+            return None, (
+                "unavailable",
+                f"edge[{idx}]: {role} HMAC key material not available to the "
+                "verifier (no pinned policy, or the authenticator names no "
+                "key_id); fails closed — single-org IKM is distributed to the "
+                "verifier out of band, never in the bundle",
+            )
+        kid = key_id.encode("utf-8")
+        ikm = policy.pinned_hmac_ikm.get(kid)
+        if ikm is None:
+            return None, (
+                "unavailable",
+                f"edge[{idx}]: {role} key_id={key_id!r} is not pinned for HMAC in "
+                "the verifier's policy (fail-closed)",
+            )
+        return (
+            derive_cross_host_receipt_key(
+                sender_signing_key_material=ikm, info_label=info_label
+            ),
+            None,
+        )
+
     def check(self, bundle_dir: Path, manifest) -> PluginResult:
         # Backward compat: legacy bundles (pre-C19) carry causal_chain=None.
         if manifest.causal_chain is None:
@@ -1186,6 +1297,7 @@ class CrossHostPeerReviewAuthenticatorCheck:
             reason_code="PASS",
             detail=(
                 f"all {len(edges)} cross-host edge(s) TRUSTED under v0.3 "
+                f"[keys: {self._key_provenance_face(edges)}] "
                 "reference implementation; "
                 + (
                     "edge send/ack timestamps CRYPTO-VERIFIED against pinned "
@@ -1267,6 +1379,39 @@ class CrossHostPeerReviewAuthenticatorCheck:
         # bundle-supplied field.
         auth_kind = edge.get("authenticator_kind", "hmac")
         deployment_scope = edge.get("deployment_scope", "single_org")
+        # Key material inside the artifact is refused on EVERY arm, before any
+        # routing: an edge that ships the verifier's key is a finding whatever
+        # kind it claims (the hmac arm re-checks; this is the door).
+        for field_name in ("sender_signature", "receiver_acknowledgment"):
+            fld = edge.get(field_name)
+            if isinstance(fld, dict):
+                shipped = sorted(self._KEY_MATERIAL_FIELDS & set(fld))
+                if shipped:
+                    return PluginResult(
+                        ok=False,
+                        reason_code="CROSS_HOST_KEY_MATERIAL_IN_BUNDLE",
+                        detail=(
+                            f"edge[{idx}]: {field_name} carries key material "
+                            f"{shipped} inside the bundle; refused before any "
+                            "verification (the verifier's keys come only from its "
+                            "pinned policy)"
+                        ),
+                        files_audited=(),
+                    )
+        # The kind is a closed vocabulary. Anything else — including a case
+        # variant such as "HMAC" — is refused, never routed to the default arm
+        # (a spelling that is not "hmac" used to skip the cross_org HMAC refusal
+        # and land in the HMAC arm anyway).
+        if auth_kind not in ("hmac", "cose_sign1"):
+            return PluginResult(
+                ok=False,
+                reason_code="CROSS_HOST_AUTH_KIND_UNSUPPORTED",
+                detail=(
+                    f"edge[{idx}]: authenticator_kind={auth_kind!r} is not one of "
+                    "{'hmac', 'cose_sign1'} (exact, case-sensitive); refused"
+                ),
+                files_audited=(),
+            )
         if auth_kind == "cose_sign1" and self.cross_org_policy is None:
             return PluginResult(
                 ok=False,
@@ -1401,20 +1546,33 @@ class CrossHostPeerReviewAuthenticatorCheck:
             if res is not None:
                 return res
         else:
-            K_send_hex = sig_field.get("_test_only_K_send_hex")
-            if K_send_hex is None:
+            K_send, failure = self._hmac_key_for(
+                sig_field, role="sender", info_label=_CTX_SENDER, idx=idx
+            )
+            if failure is not None:
+                kind, detail = failure
+                if kind == "material":
+                    return PluginResult(
+                        ok=False,
+                        reason_code="CROSS_HOST_KEY_MATERIAL_IN_BUNDLE",
+                        detail=detail,
+                        files_audited=(),
+                    )
                 return PluginResult(
                     ok=False,
                     reason_code="SENDER_KEY_MATERIAL_UNAVAILABLE",
-                    detail=(
-                        f"edge[{idx}]: sender HMAC key material not available to "
-                        "verifier; production deployments distribute K_send via "
-                        "TUF (out-of-substrate scope)"
-                    ),
+                    detail=detail,
                     files_audited=(),
                 )
-            K_send = bytes.fromhex(K_send_hex)
-            sender_sig = bytes.fromhex(sig_field["sig"])
+            try:
+                sender_sig = bytes.fromhex(sig_field["sig"])
+            except (KeyError, TypeError, ValueError):
+                return PluginResult(
+                    ok=False,
+                    reason_code="SENDER_SIGNATURE_VERIFICATION_FAILED",
+                    detail=f"edge[{idx}]: sender_signature.sig missing or not hex",
+                    files_audited=(),
+                )
             if not verify_cross_host_authenticator(
                 K=K_send, preimage=sender_preimage, sig=sender_sig
             ):
@@ -1493,18 +1651,39 @@ class CrossHostPeerReviewAuthenticatorCheck:
             ack_sig_ok = True
         else:
             ack_sig_ok = False
-        K_ack_hex = None if ack_sig_ok else ack.get("_test_only_K_ack_hex")
-        if not ack_sig_ok and K_ack_hex is None:
-            return PluginResult(
-                ok=False,
-                reason_code="RECEIVER_KEY_MATERIAL_UNAVAILABLE",
-                detail=f"edge[{idx}]: receiver HMAC key material not available",
-                files_audited=(),
+        K_ack: bytes | None = None
+        if not ack_sig_ok:
+            K_ack, failure = self._hmac_key_for(
+                ack, role="receiver", info_label=_CTX_ACK, idx=idx
             )
+            if failure is not None:
+                kind, detail = failure
+                if kind == "material":
+                    return PluginResult(
+                        ok=False,
+                        reason_code="CROSS_HOST_KEY_MATERIAL_IN_BUNDLE",
+                        detail=detail,
+                        files_audited=(),
+                    )
+                return PluginResult(
+                    ok=False,
+                    reason_code="RECEIVER_KEY_MATERIAL_UNAVAILABLE",
+                    detail=detail,
+                    files_audited=(),
+                )
+            try:
+                ack_sig = bytes.fromhex(ack["sig"])
+            except (KeyError, TypeError, ValueError):
+                return PluginResult(
+                    ok=False,
+                    reason_code="ACK_SIGNATURE_VERIFICATION_FAILED",
+                    detail=f"edge[{idx}]: receiver_acknowledgment.sig missing or not hex",
+                    files_audited=(),
+                )
         if not ack_sig_ok and not verify_cross_host_authenticator(
-            K=bytes.fromhex(K_ack_hex),
+            K=K_ack,
             preimage=ack_preimage,
-            sig=bytes.fromhex(ack["sig"]),
+            sig=ack_sig,
         ):
             return PluginResult(
                 ok=False,

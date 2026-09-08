@@ -26,7 +26,7 @@ secops_alert_minimal/
 ## Quick-start
 
 ```bash
-cd veriker
+cd <repo root>   # the directory holding pyproject.toml
 
 # Build
 python examples/secops_alert_minimal/_build_bundle.py --out-dir /tmp/secops_bundle
@@ -77,7 +77,7 @@ Two dispatch records are written into `manifest.json["dispatch_records"]`
 `op_kinds_admitted=frozenset({"ALERT_CLASSIFY", "RETRIEVAL", "COMPUTE"})`.
 `ALERT_CLASSIFY` is a new domain-specific op kind not in the substrate default
 enum — passing a custom frozenset is the extension mechanism (per
-`dispatch_record_wellformed.py` constructor docs and SKILL.md §5).
+`dispatch_record_wellformed.py` constructor docs and the pilot recipe's tamper-test discipline).
 
 The re-derivation pack (`alert_classification_re_derivation.py`) additionally
 cross-checks `dispatch_records[0].predicates == matched_rule_ids` and

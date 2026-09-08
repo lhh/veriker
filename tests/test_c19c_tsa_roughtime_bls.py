@@ -30,6 +30,10 @@ from pathlib import Path
 
 import pytest
 
+# Optional-dependency slice: SKIP cleanly when cbor2 is absent
+# (installed by `veriker[c19]`) rather than failing collection.
+pytest.importorskip("cbor2")
+
 # Ensure the package is importable when tests are run from repo root.
 _PRODUCT_ROOT = Path(__file__).resolve().parents[1]
 if str(_PRODUCT_ROOT) not in sys.path:
@@ -989,6 +993,46 @@ class TestVerifyPerEventRoughtimeQuorum:
                 assurance_profile="production-standard",
                 expected_preimage_by_event_id={"event-0": preimage},
             )
+
+    @pytest.mark.parametrize(
+        "hostile_payload,shape",
+        [
+            (b"\x40", "cbor empty byte-string"),
+            (b"\x01", "cbor int"),
+            (b"\x80", "cbor empty array"),
+            (b"\x63abc", "cbor text-string"),
+        ],
+    )
+    def test_non_mapping_srep_payload_raises_substrate_code_not_untyped_crash(
+        self, test_pinned, hostile_payload, shape
+    ):
+        """`srep_bytes_b64` is PRODUCER-CONTROLLED. Any CBOR that decodes to a
+        non-mapping makes `pkt["srep"]` raise TypeError, which is NOT a
+        C19LayerBError and escapes the verifier as an untyped crash rather
+        than `_parse_srep`'s documented ROUGHTIME_SREP_SIGNATURE_INVALID.
+
+        The load-bearing assertion is the SUBCLASS one: a crashed checker is
+        not a disagreement, so every producer-reachable parse failure must
+        arrive as a substrate reason code a consumer can match on.
+        """
+        preimage, nonce = self._preimage_and_nonce()
+        bad = fx.mint_srep(
+            root_name="cloudflare-roughtime-2",
+            midp_ms=1_700_000_000_000,
+            radi_ms=50,
+            nonce=nonce,
+        )
+        bad["srep_bytes_b64"] = base64.b64encode(hostile_payload).decode("ascii")
+        layer_b = self._build_layer_b(sreps=[bad])
+        with pytest.raises(m.ROUGHTIME_SREP_SIGNATURE_INVALID) as excinfo:
+            m.verify_per_event_roughtime_quorum(
+                layer_b,
+                assurance_profile="production-standard",
+                expected_preimage_by_event_id={"event-0": preimage},
+            )
+        assert isinstance(excinfo.value, m.C19LayerBError), (
+            f"{shape} escaped as a non-substrate exception"
+        )
 
     def test_reject_cloudflare_polled_on_2002_decommissioned_port(self, test_pinned):
         preimage, nonce = self._preimage_and_nonce()

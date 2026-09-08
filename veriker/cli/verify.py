@@ -111,6 +111,21 @@ from audit_bundle.verdict import VERIFIER_INCOMPLETE, VerdictState  # noqa: E402
 # beside the other disclosure prefixes 400 lines down.
 _ACCEPTANCE_PREFIX = "acceptance: "
 _TYPE_SELECTION_PREFIX = "type_selection: "
+_RECOMPUTE_DETAIL_PREFIX = "recompute_detail: "
+
+
+def _ts(text: object) -> str:
+    """Terminal-safe rendering of a string that may carry producer bytes.
+    Control characters (newline, carriage return, ESC, the rest of C0, DEL)
+    are shown as their escapes, so a check name or a detail cannot end the
+    line it is printed on and start a forged one. Everything else is verbatim.
+    Measured 2026-09-06: an output_id with embedded newlines printed a fake
+    'PASS  (12 check(s) passed)' line above the real FAIL summary. The JSON
+    face (--verdict-out) needs none of this; JSON escapes."""
+    s = text if isinstance(text, str) else str(text)
+    return "".join(
+        ch if (ch >= " " and ch != "\x7f") else repr(ch)[1:-1] for ch in s
+    )
 from audit_bundle.admission import admit_bytes  # noqa: E402
 from audit_bundle.plugins.spec_sha_pin import SpecShaPinCheck  # noqa: E402
 from audit_bundle.plugins.file_integrity_many_small import FileIntegrityManySmall  # noqa: E402
@@ -373,6 +388,25 @@ def _print_result(result: VerifyResult, plugins: list) -> None:
         else:
             rows.append(("PASS", label, ""))
 
+    # EVERY OTHER FAILURE, BY ITS OWN CHECK NAME. Until 2026-09-06 the rows
+    # above were the only rows: built-in steps and the plugin list. A failure
+    # from any other step -- spec-pinned dispatch (RE_DERIVATION_MISMATCH),
+    # the work-set (WORK_SET_VIOLATION), role policy, coverage channels -- was
+    # COUNTED in the summary line and never printed, so a re-derivation that
+    # disagreed read on the terminal as "FAIL (5 failures across 12 checks)"
+    # with twelve PASS rows above it and no reason anywhere. Measured on
+    # corner_load_equilibrium_minimal's drift bundle the day its front door
+    # became this CLI; the old wrapper had printed every failure itself.
+    covered = set(_BUILTIN_STEPS) | {
+        f"typed_check_plugins:{plugin.name}" for plugin in plugins
+    }
+    for check_name, fs in failed.items():
+        if check_name in covered:
+            continue
+        for f in fs:
+            rows.append(("FAIL", check_name, f"[{f.reason_code}] {f.detail}"))
+
+    rows = [(status, _ts(name), _ts(detail)) for status, name, detail in rows]
     col = max((len(name) for _, name, _ in rows), default=0)
     for status, name, detail in rows:
         line = f"{status}  {name:<{col}}"
@@ -397,7 +431,7 @@ def _print_result(result: VerifyResult, plugins: list) -> None:
         for d in acceptance:
             body = d[len(_ACCEPTANCE_PREFIX) :]
             marker = "!!" if "NOT APPLIED" in body else "  "
-            print(f"{marker}  acceptance  {body}")
+            print(f"{marker}  acceptance  {_ts(body)}")
 
     # WHICH CLAIMS WERE REQUIRED AND WHICH RULE JUDGED EACH — or that nobody
     # said. Same reasoning as the acceptance rows: the JSON carries this, the
@@ -417,7 +451,20 @@ def _print_result(result: VerifyResult, plugins: list) -> None:
             marker = (
                 "!!" if "NO auditor work-set" in body or "NOT APPLIED" in body else "  "
             )
-            print(f"{marker}  type_selection  {body}")
+            print(f"{marker}  type_selection  {_ts(body)}")
+    # WHAT EACH PASSING PRIMITIVE SAID ABOUT ITS OWN RUN — the coverage
+    # statement a green run needs most ("judged 94 of 120 samples"). Failure
+    # rows already carry the primitive's detail; these are the PASS rows'.
+    details = [
+        d
+        for d in (getattr(completeness, "disclosures", None) or ())
+        if d.startswith(_RECOMPUTE_DETAIL_PREFIX)
+    ]
+    if details:
+        if not acceptance and not selection:
+            print()
+        for d in details:
+            print(f"    recompute_detail  {_ts(d[len(_RECOMPUTE_DETAIL_PREFIX) :])}")
 
     print()
     n_not_run = sum(1 for status, _, _ in rows if status == "NOT-RUN")
@@ -441,12 +488,14 @@ def _print_result(result: VerifyResult, plugins: list) -> None:
 # DSSE sidecar guard — Option A (re-derivation only; fail-closed on sealed bundles)
 # =============================================================================
 # Post-cutover bundles carry a bundle.dsse.json sidecar whose payload is
-# signed with Ed25519. stdlib has no Ed25519 verifier, so this offline tool
-# CANNOT check the signature. The only safe outcome: return verified=False with
-# code DSSE_SIGNATURE_UNCHECKED_NO_CRYPTO and a pointer to the shipped library
-# verification primitives (audit_bundle.dsse.envelope.verify_envelope +
-# set_closure.snapshot_and_compare), which require the caller-injected,
-# out-of-band C18 public-key allowlist.
+# signed with Ed25519. This module stays stdlib-only at import, so THIS guard
+# cannot check the signature itself. Two outcomes, both fail-closed:
+#   * no --dsse-* flags: verified=False with DSSE_SIGNATURE_UNCHECKED_NO_CRYPTO
+#     and a pointer to the wiring below (unchanged since v0.1);
+#   * the three --dsse-* inputs given: the guard DELEGATES — the auditor-held
+#     context is built lazily (audit_bundle.dsse.context, cryptography imported
+#     inside the call) and BundleVerifier.verify runs the Ed25519 gate,
+#     revocation and set-closure. The guard row on the face reads DELEGATED.
 #
 # Import allowlist (NON-NEGOTIABLE):
 #   audit_bundle.bundle_manifest.is_post_cutover  — stdlib-pure membership test
@@ -463,10 +512,17 @@ _DSSE_SUBSTRATE_VERIFIER_HINT = (
     "assertion is made.\n"
     "\n"
     "Verifying a sealed bundle requires the public-key allowlist (kid -> 32-byte "
-    "Ed25519 pubkey). The allowlist is distributed out-of-band and is NEVER "
-    "contained in the bundle, so this distribution ships the verification "
-    "PRIMITIVES as a library, not a turnkey CLI (the trust root must be injected "
-    "by the integrator):\n"
+    "Ed25519 pubkey), a signed revocation list and the revocation-root role "
+    "document. All three are auditor-held, distributed out-of-band, and NEVER "
+    "read from the bundle. Hand them to THIS tool and the Ed25519 gate runs inside "
+    "verify():\n"
+    "\n"
+    "  veriker/cli/verify.py --bundle-dir <dir> --dsse-allowlist <allowlist.json> \\\n"
+    "      --dsse-revocation-list <vkernel_revocations.json> \\\n"
+    "      --dsse-revocation-root <revocation_root.json>   # or --dsse-revocation-root-tuf <trust dir>\n"
+    "\n"
+    "Library callers build the same context with "
+    "audit_bundle.dsse.context.build_dsse_context, or call the primitives:\n"
     "\n"
     "  from pathlib import Path\n"
     "  from audit_bundle.dsse.envelope import verify_envelope\n"
@@ -489,8 +545,10 @@ def _dsse_sidecar_offline_check(
     Returns (sealed, reason_code, detail):
       - sealed=False, reason_code=None  → no sealed sidecar detected; proceed normally.
       - sealed=True, reason_code='DSSE_SIGNATURE_UNCHECKED_NO_CRYPTO'
-                                 → post-cutover sealed bundle; offline tool cannot
-                                   verify Ed25519; overall verified MUST be False.
+                                 → post-cutover sealed bundle. Without a DSSE
+                                   context overall verified MUST be False; with
+                                   one (--dsse-*), main() clears this and hands
+                                   the gate to verify() (row reads DELEGATED).
 
     SECURITY INVARIANTS (Option A, D4-safe):
       * Reads ONLY the sidecar payload's schema_version, never manifest.json, for
@@ -586,17 +644,59 @@ _C18_REQUIRED_REKOR_KEYS = ("leaf_index", "tree_size", "hashes", "root_hash")
 _C18_ALLOWED_SELF_CHECK_STATUS = frozenset({"passed", "failed", "skipped"})
 
 
-def _c18_extract_verifier_identity(manifest_json: dict) -> dict | None:
-    """Extract bundle.evidence.verifier_identity from raw manifest JSON.
+_C18_VI_FOUND = "FOUND"
+_C18_VI_ABSENT = "ABSENT"
+_C18_VI_MALFORMED = "MALFORMED"
 
-    Stdlib-only path: takes the parsed manifest dict (raw json.loads), no
-    substrate-extension imports.
+
+def _c18_locate_verifier_identity(manifest_json: object) -> tuple[str, dict | None]:
+    """Locate `evidence.verifier_identity` in raw manifest JSON — TRI-state.
+
+    Returns ``(FOUND, block)`` / ``(ABSENT, None)`` / ``(MALFORMED, None)``.
+    Stdlib-only path: the parsed dict from json.loads, no substrate-extension
+    imports. This is the THIRD hand-maintained copy of the locator (the other
+    two: `extensions/c18_verifier_identity._locate_verifier_identity` and
+    `plugins/verifier_identity_tripwire`); the dict-style branch here must
+    agree with them case for case, and `tests/c18/test_cli_verify_c18_tristate.py`
+    holds the three in agreement.
+
+    THREAT_MODEL row 20: absent may pass; present-but-unparseable must NEVER
+    share a return value with absent. Until 2026-09-02 this copy returned
+    ``dict | None`` and every non-dict value collapsed to None, which the
+    structural check read as "pre-C18 bundle, clean PASS" — so an incomplete
+    dict drew FIELD_MISSING while ``"x"`` passed clean. ``None`` (JSON null) is
+    ABSENT, not MALFORMED: a declared-but-unset field. Every other non-dict is a
+    producer statement that failed to parse, at either level.
     """
-    evidence = manifest_json.get("evidence")
-    if not isinstance(evidence, dict):
-        return None
-    vi = evidence.get("verifier_identity")
-    return vi if isinstance(vi, dict) else None
+    if not isinstance(manifest_json, dict):
+        return _C18_VI_ABSENT, None
+    if "evidence" in manifest_json:
+        evidence = manifest_json["evidence"]
+        if isinstance(evidence, dict):
+            if "verifier_identity" in evidence:
+                vi = evidence["verifier_identity"]
+                if isinstance(vi, dict):
+                    return _C18_VI_FOUND, vi
+                if vi is not None:
+                    return _C18_VI_MALFORMED, None
+        elif evidence is not None:
+            # The same degradation ONE LEVEL UP: an unparseable `evidence`
+            # hides verifier_identity just as effectively.
+            return _C18_VI_MALFORMED, None
+    # No top-level fallback for a raw JSON manifest: the canonical extension copy
+    # honours a top-level `verifier_identity` only on ATTRIBUTE-style objects (a
+    # dataclass), never on a dict — a top-level key in raw JSON is not the declared
+    # field and all three copies read it as ABSENT. (A first draft of this copy
+    # added a dict fallback here and the drift guard caught it disagreeing.)
+    return _C18_VI_ABSENT, None
+
+
+def _c18_should_run(manifest_json: object) -> bool:
+    """Auto-enable the C18 gate whenever the producer SAID something about
+    verifier identity — well-formed or not. Only a genuinely absent block is a
+    legacy bundle. (Before 2026-09-02 this was `extract(...) is not None`, so a
+    malformed block disabled the very check that would have refused it.)"""
+    return _c18_locate_verifier_identity(manifest_json)[0] != _C18_VI_ABSENT
 
 
 def _c18_is_hex(s) -> bool:
@@ -624,10 +724,20 @@ def _c18_structural_check(bundle_dir: Path) -> tuple[bool, str | None, str]:
     except json.JSONDecodeError as exc:
         return False, "C18_MANIFEST_INVALID_JSON", str(exc)
 
-    block = _c18_extract_verifier_identity(manifest_json)
-    if block is None:
+    state, block = _c18_locate_verifier_identity(manifest_json)
+    if state == _C18_VI_ABSENT:
         # Legacy / pre-C18 bundle. Clean PASS — C18 structural hint not emitted.
         return True, None, "no verifier_identity field (pre-C18 bundle)"
+    if state == _C18_VI_MALFORMED or block is None:
+        # Row 20: a present-but-unparseable block is a determinate finding
+        # about the producer's own bytes — REJECT-side, its OWN code, never
+        # folded into "field missing" and never read as absent.
+        return (
+            False,
+            "VERIFIER_IDENTITY_BLOCK_MALFORMED",
+            "evidence.verifier_identity (or evidence) is present but not a JSON "
+            "object; a present-but-unparseable block is not a legacy bundle",
+        )
 
     # 1. All required fields present when block present.
     for field in _C18_REQUIRED_FIELDS:
@@ -1091,6 +1201,83 @@ def _build_parser() -> argparse.ArgumentParser:
             "that it was what the bundle claims."
         ),
     )
+    # ------------------------------------------------------------------
+    # DSSE sealing lane — auditor-held trust material (2026-09-02)
+    # ------------------------------------------------------------------
+    # stdlib cannot check Ed25519, so a sealed bundle is FAIL by default. These
+    # flags supply the AUDITOR-HELD material the gate needs and hand the lane to
+    # BundleVerifier.verify(dsse=...): the crypto-bearing constructor
+    # (audit_bundle.dsse.context) is imported LAZILY, only when a flag is given,
+    # so `import veriker.cli.verify` stays stdlib-clean. Every path is refused inside the
+    # bundle under verdict. The lane is STRICT (require_dsse=True): supplying
+    # trust material asks for a sealed bundle, and an unsealed one is refused.
+    parser.add_argument(
+        "--dsse-allowlist",
+        dest="dsse_allowlist",
+        metavar="ALLOWLIST.json",
+        default=None,
+        help=(
+            "AUDITOR-HELD DSSE verifier allowlist: JSON {kid: base64url-nopad "
+            "Ed25519 pubkey_raw32} (the C18-distributed allowlist; same shape as "
+            "VKERNEL_DSSE_ALLOWLIST). Enables the sealing lane; requires "
+            "--dsse-revocation-list and one of --dsse-revocation-root / "
+            "--dsse-revocation-root-tuf. Refused inside the bundle dir."
+        ),
+    )
+    parser.add_argument(
+        "--dsse-revocation-list",
+        dest="dsse_revocation_list",
+        metavar="REVOCATIONS.json",
+        default=None,
+        help=(
+            "AUDITOR-HELD signed revocation list (vkernel_revocations.json). Its "
+            "Ed25519 signature must be by the list signer the revocation ROOT pins."
+        ),
+    )
+    parser.add_argument(
+        "--dsse-revocation-root",
+        dest="dsse_revocation_root",
+        metavar="REVOCATION_ROOT.json",
+        default=None,
+        help=(
+            "AUDITOR-HELD revocation-root role document (the shape of "
+            "audit_bundle/extensions/_tuf_root/revocation_root.json, post-ceremony): "
+            "strict-validated, its own 2-of-3 Ed25519 signatures verified, and its "
+            "pinned_revocation_list_signer_fingerprint is the ONLY kid the list may "
+            "be signed by. Mutually exclusive with --dsse-revocation-root-tuf."
+        ),
+    )
+    parser.add_argument(
+        "--dsse-revocation-root-tuf",
+        dest="dsse_revocation_root_tuf",
+        metavar="TRUST_DIR",
+        default=None,
+        help=(
+            "Fetch the revocation-root role document through the TUF chain instead "
+            "(persistent trust dir, e.g. host_digest_verify's --tuf-trust-bundle); "
+            "the same validation and signature checks then apply to the fetched "
+            "document. Needs python-tuf."
+        ),
+    )
+    parser.add_argument(
+        "--dsse-tuf-feed-url",
+        dest="dsse_tuf_feed_url",
+        default=None,
+        help="TUF feed base URL for --dsse-revocation-root-tuf (default: the substrate's).",
+    )
+    parser.add_argument(
+        "--dsse-now",
+        dest="dsse_now",
+        type=int,
+        default=None,
+        help=(
+            "Verifier clock (unix seconds) the revocation root's expiry, the list's "
+            "window and every not_after are graded against. Default: the wall clock; "
+            "recorded on the face either way. May be pinned at or AFTER now (at most "
+            "300 s behind): a backdated clock would un-revoke keys and un-stale lists, "
+            "so it is refused as an operator error (exit 2)."
+        ),
+    )
     parser.add_argument(
         "--unsafe-in-place",
         dest="unsafe_in_place",
@@ -1117,6 +1304,91 @@ class SpecAnchorArgError(Exception):
     nothing about the bundle's validity was concluded), so it maps to exit 2
     (could not conclude), never exit 1.
     """
+
+
+class DsseContextArgError(Exception):
+    """A --dsse-* argument was given but the auditor-held material is unusable.
+
+    OPERATOR error: no verdict about the bundle was formed, so exit 2 (could not
+    conclude), never exit 1.
+    """
+
+
+_DSSE_FLAGS = (
+    "dsse_allowlist",
+    "dsse_revocation_list",
+    "dsse_revocation_root",
+    "dsse_revocation_root_tuf",
+    "dsse_tuf_feed_url",
+    "dsse_now",
+)
+
+
+def _dsse_lane_requested(args) -> bool:
+    return any(getattr(args, name, None) is not None for name in _DSSE_FLAGS)
+
+
+def _build_dsse_context(args, bundle_dir: Path):
+    """Build the DSSE verification context from AUDITOR-HELD inputs, or raise
+    DsseContextArgError.
+
+    Thin shim over `audit_bundle.dsse.context.build_dsse_context`; every path is
+    refused inside `bundle_dir` there. Import is LAZY (the module pulls in
+    `cryptography` / `rfc8785`) for the same reason `_build_spec_anchor`'s is: a
+    module-level import would break the stdlib-only claim that
+    tests/test_stdlib_import_boundary.py ratchets, and in a deps-absent
+    environment the ImportError surfaces HERE as an operator error (exit 2), never
+    as a silent skip of the lane.
+    """
+    missing = [
+        flag
+        for flag, val in (
+            ("--dsse-allowlist", args.dsse_allowlist),
+            ("--dsse-revocation-list", args.dsse_revocation_list),
+        )
+        if val is None
+    ]
+    if args.dsse_revocation_root is None and args.dsse_revocation_root_tuf is None:
+        missing.append("--dsse-revocation-root | --dsse-revocation-root-tuf")
+    if missing:
+        raise DsseContextArgError(
+            "the DSSE sealing lane needs the allowlist, the revocation list and a "
+            f"revocation root; missing: {missing}"
+        )
+    if args.dsse_revocation_root is not None and args.dsse_revocation_root_tuf is not None:
+        raise DsseContextArgError(
+            "--dsse-revocation-root and --dsse-revocation-root-tuf are mutually "
+            "exclusive: one revocation root per run"
+        )
+    try:
+        from audit_bundle.dsse.context import (  # noqa: PLC0415
+            DsseContextError,
+            RevocationRootFile,
+            RevocationRootTuf,
+            build_dsse_context,
+        )
+    except ImportError as exc:
+        raise DsseContextArgError(
+            f"the DSSE sealing lane needs cryptography + rfc8785 ({exc}); this "
+            "interpreter cannot check an Ed25519 seal"
+        ) from exc
+    import time  # noqa: PLC0415
+
+    root = (
+        RevocationRootFile(Path(args.dsse_revocation_root))
+        if args.dsse_revocation_root is not None
+        else RevocationRootTuf(Path(args.dsse_revocation_root_tuf), args.dsse_tuf_feed_url)
+    )
+    try:
+        return build_dsse_context(
+            allowlist_path=Path(args.dsse_allowlist),
+            revocation_list_path=Path(args.dsse_revocation_list),
+            revocation_root=root,
+            verifier_now=args.dsse_now if args.dsse_now is not None else int(time.time()),
+            forbid_within=bundle_dir,
+        )
+    except DsseContextError as exc:
+        raise DsseContextArgError(str(exc)) from exc
 
 
 def _build_spec_anchor(paths: list[str], bundle_dir: Path):
@@ -1735,7 +2007,7 @@ def _main(args, face: dict) -> int:
     _adm = admit_bytes(_raw_manifest, check_name="manifest_admission")
     if _adm is not None:
         r = _adm.reasons[0]
-        print(f"FAIL  manifest_admission  [{r.code}] {r.detail}", file=sys.stderr)
+        print(f"FAIL  manifest_admission  [{r.code}] {_ts(r.detail)}", file=sys.stderr)
         face["reason_codes"].append(r.code)
         return 1
 
@@ -1748,10 +2020,51 @@ def _main(args, face: dict) -> int:
     # sealed bundle. The check reads ONLY the sidecar payload's
     # schema_version (D4-safe: never manifest.json for this decision).
     _dsse_sealed, _dsse_reason, _dsse_detail = _dsse_sidecar_offline_check(bundle_dir)
+    # With auditor-held DSSE material the Ed25519 gate runs INSIDE verify()
+    # (BundleVerifier._dsse_pre_gate) and decides; the stdlib guard then only
+    # reports what it saw. Built BEFORE the guard row so an unusable context is
+    # an exit-2 operator error and never reads as a gate verdict.
+    dsse_ctx = None
+    if _dsse_lane_requested(args):
+        try:
+            dsse_ctx = _build_dsse_context(args, bundle_dir)
+        except DsseContextArgError as exc:
+            print(
+                f"ERROR  dsse_context_arg  [DSSE_CONTEXT_ARG_INVALID] {exc}",
+                file=sys.stderr,
+            )
+            face["reason_codes"].append("DSSE_CONTEXT_ARG_INVALID")
+            face["cli_gates"].append(
+                {
+                    "gate": "dsse_context_arg",
+                    "status": "ERROR",
+                    "reason_code": "DSSE_CONTEXT_ARG_INVALID",
+                }
+            )
+            return 2
+        face["cli_gates"].append(
+            {
+                "gate": "dsse_context",
+                "status": "HELD",
+                "reason_code": None,
+                "provenance": list(dsse_ctx.provenance),
+            }
+        )
+        for row in dsse_ctx.provenance:
+            print(f"DSSE context: {row}")
+    if _dsse_sealed and dsse_ctx is not None:
+        _dsse_sealed, _dsse_reason = False, None
+        _dsse_guard_status = "DELEGATED"
+        print(
+            "DELEGATED  dsse_sidecar_guard  sealed bundle; Ed25519 gate delegated to "
+            "verify() under the auditor-held DSSE context above"
+        )
+    else:
+        _dsse_guard_status = "FAIL" if _dsse_sealed else "PASS"
     face["cli_gates"].append(
         {
             "gate": "dsse_sidecar_guard",
-            "status": "FAIL" if _dsse_sealed else "PASS",
+            "status": _dsse_guard_status,
             "reason_code": _dsse_reason,
         }
     )
@@ -1791,7 +2104,7 @@ def _main(args, face: dict) -> int:
         BadPublicationClass,
     ) as exc:
         print(
-            f"FAIL  manifest_validation  [{type(exc).__name__}] {exc}",
+            f"FAIL  manifest_validation  [{type(exc).__name__}] {_ts(exc)}",
             file=sys.stderr,
         )
         face["reason_codes"].append(type(exc).__name__)
@@ -1968,7 +2281,7 @@ def _main(args, face: dict) -> int:
     )
 
     try:
-        result = verifier.verify(bundle_dir)
+        result = verifier.verify(bundle_dir, dsse=dsse_ctx)
     except FileNotFoundError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         face["reason_codes"].append("BUNDLE_FILE_NOT_FOUND")
@@ -2051,14 +2364,14 @@ def _main(args, face: dict) -> int:
         )
         print()
         if _gated:
-            print(f"ERROR  re_derivation_surface  {body}", file=sys.stderr)
+            print(f"ERROR  re_derivation_surface  {_ts(body)}", file=sys.stderr)
         elif _leg_recorded:
             print(
                 f"NOTE (gated; subsumed by REJECT)  re_derivation_surface  {body}",
                 file=sys.stderr,
             )
         else:
-            print(f"NOTE  re_derivation_surface  {body}")
+            print(f"NOTE  re_derivation_surface  {_ts(body)}")
 
     # ----------------------------------------------------------------------
     # C18 stdlib-only structural extension
@@ -2071,7 +2384,7 @@ def _main(args, face: dict) -> int:
     if run_c18 is None:
         try:
             mf = json.loads((bundle_dir / "manifest.json").read_text(encoding="utf-8"))
-            run_c18 = _c18_extract_verifier_identity(mf) is not None
+            run_c18 = _c18_should_run(mf)
         except (OSError, json.JSONDecodeError):
             run_c18 = False
 
@@ -2090,7 +2403,7 @@ def _main(args, face: dict) -> int:
             face["reason_codes"].append(c18_reason)
         if c18_ok:
             print()
-            print(f"PASS  c18_structural  {c18_detail}")
+            print(f"PASS  c18_structural  {_ts(c18_detail)}")
             print()
             print("OFFLINE STRUCTURAL VERIFICATION: PASS")
             print(_C18_NEXT_STEPS_HINT)
@@ -2173,7 +2486,7 @@ def _main(args, face: dict) -> int:
             face["reason_codes"].append(reason)
         if status == "PASS":
             print()
-            print(f"PASS  extension_receipt:{kind}  {detail}")
+            print(f"PASS  extension_receipt:{_ts(kind)}  {_ts(detail)}")
         elif status == "NOT_EVALUATED":
             print()
             print(

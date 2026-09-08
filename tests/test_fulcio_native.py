@@ -26,6 +26,10 @@ import json
 from pathlib import Path
 
 import pytest
+
+# Optional-dependency slice: SKIP cleanly when cryptography is absent
+# (installed by `veriker[crypto]`) rather than failing collection.
+pytest.importorskip("cryptography")
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec

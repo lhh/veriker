@@ -22,6 +22,10 @@ from pathlib import Path
 
 import pytest
 
+# Optional-dependency slice: SKIP cleanly when cryptography is absent
+# (installed by `veriker[crypto]`) rather than failing collection.
+pytest.importorskip("cryptography")
+
 from audit_bundle.dsse.envelope import PINNED_URI, verify_envelope
 from audit_bundle.dsse.pae import (
     b64url_nopad_decode,

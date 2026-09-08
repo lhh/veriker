@@ -155,6 +155,43 @@ def _admit_depth_scan(raw, name):
                 depth -= 1
 
 
+# Strict-parse hooks — duplicated, not imported (stdlib-only / standalone pack;
+# see module docstring). Same three refusals as audit_bundle.strict_json, which
+# this pack cannot import; tests/test_reference_pack_parity.py pins every
+# pack's copy to control_rederivation's, and test_strict_json_single_source
+# pins control's behaviour to the substrate parser.
+_ADMIT_MAX_INT_DIGITS = 600
+
+
+def _admit_pairs(pairs):
+    """object_pairs_hook: a duplicate object key is refused (stdlib keeps the
+    LAST; a first-wins reader sees a different document under the same sha)."""
+    d = {}
+    for k, v in pairs:
+        if k in d:
+            raise ValueError(f"duplicate object key {k!r} in input")
+        d[k] = v
+    return d
+
+
+def _admit_int(s):
+    if len(s.lstrip("-")) > _ADMIT_MAX_INT_DIGITS:
+        raise ValueError(f"integer token longer than {_ADMIT_MAX_INT_DIGITS} digits")
+    return int(s)
+
+
+def _admit_const(name):
+    raise ValueError(f"non-standard JSON token {name!r} rejected")
+
+
+def _admit_loads(raw):
+    """json.loads with the three strict hooks. Every producer-byte parse in this
+    pack goes through here."""
+    return json.loads(
+        raw, object_pairs_hook=_admit_pairs, parse_int=_admit_int, parse_constant=_admit_const
+    )
+
+
 def _admitted_json(path):
     """Size- and depth-bounded replacement for json.loads(path.read_text())."""
     size = path.stat().st_size
@@ -162,7 +199,7 @@ def _admitted_json(path):
         raise ValueError(f"{path.name}: {size} bytes exceeds max {_ADMIT_MAX_BYTES}")
     raw = path.read_bytes()
     _admit_depth_scan(raw, path.name)
-    return json.loads(raw)
+    return _admit_loads(raw)
 
 
 def _admitted_jsonl(path):
@@ -177,7 +214,7 @@ def _admitted_jsonl(path):
             if not s:
                 continue
             _admit_depth_scan(s, path.name)
-            rows.append(json.loads(s))
+            rows.append(_admit_loads(s))
     return rows
 
 
@@ -361,8 +398,7 @@ def compare(result: dict, ref_path: pathlib.Path) -> int:
         return 2
 
     try:
-        with open(ref_path, encoding="utf-8") as fh:
-            ref = json.load(fh)
+        ref = _admitted_json(ref_path)
     except Exception as exc:
         print(f"[energy_score_pack] reference parse error: {exc}", file=sys.stderr)
         return 2

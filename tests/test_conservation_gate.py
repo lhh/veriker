@@ -46,6 +46,8 @@ from audit_bundle.plugins.pass3_conservation_shim import ConservationResultAbsen
 from audit_bundle.verdict import VerdictState
 from audit_bundle.verifier import BundleVerifier, _load_manifest
 
+from tests._optional_deps import requires_cryptography
+
 
 def _sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
@@ -160,6 +162,7 @@ def test_deep_undeclared_scaffold_is_surplus_to_pluginless_verify(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+@requires_cryptography
 def test_envelope_lane_sealed_dsse_gate_is_the_checker(tmp_path):
     """Sealed lane: reaching conservation means the DSSE gate ran and passed
     — the envelope files are claimed with no unsealed residual disclosed."""
@@ -174,6 +177,7 @@ def test_envelope_lane_sealed_dsse_gate_is_the_checker(tmp_path):
     )
 
 
+@requires_cryptography
 def test_envelope_lane_sidecar_present_unsealed_fail_closed(tmp_path):
     """Sidecar present + no DSSE context: the pre-gate rejects fail-closed;
     conservation is never reached on this lane (that IS its semantics)."""
@@ -293,6 +297,7 @@ def test_fs_ignore_pattern_matching_envelope_path_is_verdict_error(tmp_path):
     assert verdict.reasons[0].code == VERIFIER_FS_IGNORE_CONFLICT
 
 
+@requires_cryptography
 def test_fs_ignore_sealed_bundles_ignore_nothing(tmp_path):
     """Under seal the patterns are inert: a surplus file still rejects (the
     set-closure gate fires regardless of any auditor tolerance), and

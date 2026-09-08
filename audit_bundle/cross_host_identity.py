@@ -31,7 +31,8 @@ def cross_host_edge_key(edge: dict) -> str:
     from `json.loads(manifest.json)` so it is JSON-serialisable by construction.
     """
     canonical = json.dumps(
-        edge, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        edge, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+        allow_nan=False,
     )
     return "ch:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 

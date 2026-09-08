@@ -32,6 +32,8 @@ import pytest
 from audit_bundle.bundle_manifest import BundleManifest
 from audit_bundle.verifier import BundleVerifier, VerifyFailure
 
+from tests._optional_deps import requires_rfc8785
+
 
 def _sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
@@ -273,6 +275,7 @@ def _sealed_bundle_with_spec(bundle_dir: Path, *, with_offline_copy: bool):
     return key
 
 
+@requires_rfc8785
 def test_sealed_with_signed_offline_copy_is_green_and_undisclosed(
     tmp_path: Path,
 ) -> None:
@@ -287,6 +290,7 @@ def test_sealed_with_signed_offline_copy_is_green_and_undisclosed(
     assert not any("ambient git" in d for d in verdict.completeness.disclosures)
 
 
+@requires_rfc8785
 def test_sealed_pin_without_offline_copy_rejects_even_when_git_could_satisfy_it(
     tmp_path: Path,
 ) -> None:

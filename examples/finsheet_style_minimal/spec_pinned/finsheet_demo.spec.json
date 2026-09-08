@@ -1,0 +1,33 @@
+{
+  "description": "Committed demo spec for finsheet_style_minimal: L2_S1 question Q10 (total NAV of the fund). Both producer-visible inputs are pinned: the sheet-query-v1 question AND the workbook bytes (deterministic generation, seed 20260902). answer_semantic re-derives under the pinned question; answer_consistency replays the producer's stated operands against the pinned workbook. scalar_epsilon 0.0051 under numeric_model decimal_fixed_point_half_ulp = half a unit in the last place of the 2-dp contract.",
+  "spec_id": "finsheet_style.demo.L2_S1.Q10.v1",
+  "types": {
+    "answer_consistency": {
+      "comparator": {
+        "kind": "scalar_epsilon",
+        "params": {
+          "epsilon": 0.0051,
+          "numeric_model": "decimal_fixed_point_half_ulp"
+        }
+      },
+      "pinned_inputs": {
+        "data/workbook.xlsx": "bebc98e06a07730be93f287df8f61d910d6a8a2e63ad445a69b31135ec5f8c09"
+      },
+      "primitive_id": "sheet_derivation_replay@1"
+    },
+    "answer_semantic": {
+      "comparator": {
+        "kind": "scalar_epsilon",
+        "params": {
+          "epsilon": 0.0051,
+          "numeric_model": "decimal_fixed_point_half_ulp"
+        }
+      },
+      "pinned_inputs": {
+        "data/workbook.xlsx": "bebc98e06a07730be93f287df8f61d910d6a8a2e63ad445a69b31135ec5f8c09",
+        "inputs/query.json": "9266e412cd7fe3aa07e8f37c6a7c47a71736a5a7f5980a88e7998a4cffb61e7f"
+      },
+      "primitive_id": "sheet_query_recompute@1"
+    }
+  }
+}

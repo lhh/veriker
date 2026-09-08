@@ -23,6 +23,7 @@ from audit_bundle.extensions.c18_tuf_client import (
     TUFClientError,
     TUFRoleSeparationViolation,
     fetch_revocation_root,
+    validate_revocation_root_document,
 )
 
 _BUNDLED = (
@@ -50,8 +51,46 @@ def test_fetch_revocation_root_fails_closed_on_bootstrap_placeholder() -> None:
     """Fail-closed default: the pre-ceremony bundled file has empty signatures,
     so the loader REFUSES it without the explicit bootstrap opt-in. The
     protection is always-on at the API boundary, not only in the release gate."""
+    role = fetch_revocation_root_bootstrap_unverified()
     with pytest.raises(TUFBootstrapPlaceholderPresent):
-        fetch_revocation_root()
+        validate_revocation_root_document(role, source="bundled")
+    # And the strict fetcher never reads the bundled file: no trust dir -> closed.
+    with pytest.raises(TUFClientError, match="PERSISTENT trust_dir"):
+        fetch_revocation_root(feed_url="http://127.0.0.1:9/never")
+
+
+def test_validator_grades_expiry_against_now() -> None:
+    """Strict validation refuses an expired revocation root and one that expires
+    further ahead than its own rotation policy allows; both parsed fine before."""
+    from audit_bundle.extensions.c18_tuf_client import TUFRootExpired
+
+    import re
+
+    doc = json.loads(_BUNDLED.read_text(encoding="utf-8"))
+    for sig in doc.get("signatures", []):
+        sig["sig"] = "aa" * 32
+    # Fill every ceremony placeholder so the ONLY refusal left is the expiry.
+    ph = re.compile(r"^(sha256:)?TBD")
+
+    def fill(node):
+        if isinstance(node, dict):
+            return {k: fill(v) for k, v in node.items()}
+        if isinstance(node, list):
+            return [fill(v) for v in node]
+        if isinstance(node, str) and ph.match(node):
+            return ("sha256:" if node.startswith("sha256:") else "") + "ab" * 32
+        return node
+
+    doc = fill(doc)
+    doc["signed"]["expires"] = "2019-01-01T00:00:00Z"
+    with pytest.raises(TUFRootExpired):
+        validate_revocation_root_document(doc, source="test")
+    doc["signed"]["expires"] = "2999-01-01T00:00:00Z"
+    with pytest.raises(TUFClientError, match="max_validity_days"):
+        validate_revocation_root_document(doc, source="test")
+    # non-strict (bootstrap) still returns it — the caller owns the consequence
+    role = validate_revocation_root_document(doc, source="test", strict=False)
+    assert role["role_name"] == ROLE_REVOCATION_ROOT
 
 
 def test_fetch_revocation_root_rejects_tbd_value_even_when_signed(
@@ -68,15 +107,15 @@ def test_fetch_revocation_root_rejects_tbd_value_even_when_signed(
     bad = tmp_path / "revocation_root.json"
     bad.write_text(json.dumps(doc), encoding="utf-8")
     with pytest.raises(TUFBootstrapPlaceholderPresent, match="TBD"):
-        fetch_revocation_root(bundled_path=bad)
+        validate_revocation_root_document(doc, source="test")
     # ...and the bootstrap-unverified variant still returns it.
     role = fetch_revocation_root_bootstrap_unverified(bundled_path=bad)
     assert role["role_name"] == ROLE_REVOCATION_ROOT
 
 
-def test_fetch_revocation_root_missing_file_fails_closed(tmp_path: Path) -> None:
+def test_bootstrap_loader_missing_file_fails_closed(tmp_path: Path) -> None:
     with pytest.raises(TUFClientError, match="missing"):
-        fetch_revocation_root(bundled_path=tmp_path / "nope.json")
+        fetch_revocation_root_bootstrap_unverified(bundled_path=tmp_path / "nope.json")
 
 
 def test_fetch_revocation_root_wrong_role_name_is_separation_violation(
@@ -84,25 +123,19 @@ def test_fetch_revocation_root_wrong_role_name_is_separation_violation(
 ) -> None:
     doc = json.loads(_BUNDLED.read_text(encoding="utf-8"))
     doc["role_name"] = "sigstore-trust-root"  # wrong role in this file
-    bad = tmp_path / "revocation_root.json"
-    bad.write_text(json.dumps(doc), encoding="utf-8")
     with pytest.raises(TUFRoleSeparationViolation):
-        fetch_revocation_root(bundled_path=bad)
+        validate_revocation_root_document(doc, source="test")
 
 
 def test_fetch_revocation_root_threshold_not_2_fails_closed(tmp_path: Path) -> None:
     doc = json.loads(_BUNDLED.read_text(encoding="utf-8"))
     doc["signed"]["roles"][ROLE_REVOCATION_ROOT]["threshold"] = 1  # 1-of-3 not allowed
-    bad = tmp_path / "revocation_root.json"
-    bad.write_text(json.dumps(doc), encoding="utf-8")
     with pytest.raises(TUFClientError, match="threshold"):
-        fetch_revocation_root(bundled_path=bad)
+        validate_revocation_root_document(doc, source="test")
 
 
 def test_fetch_revocation_root_expiry_over_90_days_fails_closed(tmp_path: Path) -> None:
     doc = json.loads(_BUNDLED.read_text(encoding="utf-8"))
     doc["rotation_policy"]["max_validity_days"] = 365  # exceeds the <=90 ceiling
-    bad = tmp_path / "revocation_root.json"
-    bad.write_text(json.dumps(doc), encoding="utf-8")
     with pytest.raises(TUFClientError, match="max_validity_days"):
-        fetch_revocation_root(bundled_path=bad)
+        validate_revocation_root_document(doc, source="test")

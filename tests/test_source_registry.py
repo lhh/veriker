@@ -15,6 +15,10 @@ from types import SimpleNamespace
 
 import pytest
 
+# Optional-dependency slice: SKIP cleanly when cryptography is absent
+# (installed by `veriker[crypto]`) rather than failing collection.
+pytest.importorskip("cryptography")
+
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 

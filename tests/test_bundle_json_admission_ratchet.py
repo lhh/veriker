@@ -53,12 +53,10 @@ _PKG = Path(__file__).resolve().parents[1] / "audit_bundle"
 # audit_bundle/, each with a stated reason. Burn it down, don't grow it — a
 # genuine exception is added here with justification, never silently.
 _ALLOWLIST: dict[str, str] = {
-    "extensions/c18_tuf_client.py": (
-        "reads operator-side TUF trust-store metadata, not bundle-controlled "
-        "files; the supply-chain fetch path mints no Verdict and python-tuf "
-        "performs the authoritative validation (C18 triage 2026-06-10)"
-    ),
 }
+# extensions/c18_tuf_client.py left the allowlist 2026-09-05: every TUF metadata
+# read now goes through audit_bundle.strict_json (duplicate keys / NaN /
+# oversized ints refused), so no read-into-bare-parse pattern remains to flag.
 # verifier.py left the allowlist 2026-06-11 (RES-04 single-snapshot): verify()
 # now reads manifest.json exactly once, admits those bytes, and threads them
 # through _parse_manifest — no read-into-parse pattern remains to flag.

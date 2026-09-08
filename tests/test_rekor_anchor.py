@@ -20,6 +20,16 @@ from pathlib import Path
 
 import pytest
 
+# Optional-dependency slice: SKIP cleanly when cryptography is absent
+# (installed by `veriker[crypto]`) rather than failing collection.
+pytest.importorskip("cryptography")
+
+# This file is otherwise cryptography-only; ONE test reaches
+# c19.layer_a_counter (module-level cbor2) inside its own body, so it is
+# marked rather than the whole module guarded -- the other 34 tests run
+# fine under `veriker[crypto]`.
+from tests._optional_deps import requires_cbor2
+
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec
 
@@ -170,6 +180,7 @@ def test_out_of_range_and_malformed_raise() -> None:
 # --- 4. Convention lock: RFC 6962 is the INVERSE of the in-tree per-bundle convention. ---
 
 
+@requires_cbor2
 def test_rfc6962_convention_differs_from_inner_tree() -> None:
     from audit_bundle.extensions.c19.layer_a_counter import (
         _MERKLE_LEAF_PREFIX,
@@ -254,6 +265,17 @@ def test_register_via_replay_transport_verifies_and_fails_closed() -> None:
 # --- 6. Phase C: consumer verification verdict (both legs required for ok=True). ---
 
 
+def _log_id_hex(pk) -> str:
+    import hashlib  # noqa: PLC0415
+
+    from cryptography.hazmat.primitives import serialization  # noqa: PLC0415
+
+    der = pk.public_bytes(
+        serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo
+    )
+    return hashlib.sha256(der).hexdigest()
+
+
 def _backed_bundle(statement: bytes, sk=None, m: int = 3, n: int = 8) -> dict:
     """A Rekor-backed bundle whose embedded proof is over `statement` at leaf m of n.
 
@@ -264,7 +286,10 @@ def _backed_bundle(statement: bytes, sk=None, m: int = 3, n: int = 8) -> dict:
     """
     leaves = _leaves(n)
     leaves[m] = statement
-    anchor = RekorAnchor.from_rekor_verification("L", _rekor_verification(leaves, m))
+    # A real log's entry logID leads with the key-hint of its checkpoint signer;
+    # verify_anchor binds the two, so the modelled log names itself consistently.
+    log_id = "L" if sk is None else _log_id_hex(sk.public_key())
+    anchor = RekorAnchor.from_rekor_verification(log_id, _rekor_verification(leaves, m))
     bundle = assemble_rekor_backed_statement(statement, anchor)
     if sk is not None:
         bundle["rekor"]["checkpoint"] = _p256_signed_note(
@@ -573,3 +598,36 @@ def test_real_staging_sigstore_bundle_tampered_hash_fails() -> None:
     hashes_list[0] = base64.b64encode(bytes(raw)).decode("ascii")
     anchor, parsed_leaf = rekor_anchor_from_sigstore_bundle(bundle)
     assert verify_inclusion_proof(parsed_leaf, anchor) is False
+
+
+def test_verify_log_id_that_disagrees_with_the_checkpoint_key_is_refused() -> None:
+    """Fresh-pass claims lens (2026-09-02): the LiveRekorTransport docstring said
+    the first live entry's `logID / hint agreement` is checked; no code compared
+    them. Now `verify_anchor` does: an entry whose logID does not lead with the
+    hint of the key that verified its checkpoint names a DIFFERENT log."""
+    statement = b"\xd2\x84stmt-logid"
+    sk = ec.generate_private_key(ec.SECP256R1())
+    bundle = _backed_bundle(statement, sk=sk)
+    bundle["rekor"]["log_id"] = "ff" * 32  # a stranger's log
+    verdict = verify_rekor_backed_statement(bundle, rekor_log_pubkey=sk.public_key())
+    assert verdict.inclusion_verified is True
+    assert verdict.checkpoint_verified is False
+    assert "REKOR_LOG_ID_DISAGREES_WITH_CHECKPOINT_KEY" in verdict.reasons
+    assert verdict.ok is False
+
+
+def test_verify_checkpoint_tree_size_must_match_the_proof() -> None:
+    """Fresh-pass red team LOW (2026-09-02): a checkpoint signed over tree size
+    999 with the proof's root passed beside a proof of size 1 — only the root
+    hash was compared. The signed head must be the SAME head the proof re-derives."""
+    statement = b"\xd2\x84stmt-size"
+    sk = ec.generate_private_key(ec.SECP256R1())
+    bundle = _backed_bundle(statement, sk=sk)
+    anchor_root = bytes.fromhex(bundle["rekor"]["root_hash"])
+    bundle["rekor"]["checkpoint"] = _p256_signed_note(
+        "rekor.example - 1", 999, anchor_root, sk
+    )
+    verdict = verify_rekor_backed_statement(bundle, rekor_log_pubkey=sk.public_key())
+    assert verdict.inclusion_verified is True
+    assert verdict.checkpoint_verified is False
+    assert "CHECKPOINT_ROOT_DISAGREES_WITH_INCLUSION_PROOF" in verdict.reasons

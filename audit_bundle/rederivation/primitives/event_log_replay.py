@@ -95,7 +95,8 @@ _NON_MUTATING_OPS = frozenset({"LOG", "DELETE", "DISPOSE", "PURGE", "DESTROY"})
 def canonical_record_bytes(obj) -> bytes:
     """Deterministic record serialization for digesting (sorted keys, compact)."""
     return json.dumps(
-        obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+        allow_nan=False,
     ).encode("utf-8")
 
 

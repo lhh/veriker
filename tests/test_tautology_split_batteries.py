@@ -16,6 +16,7 @@ can land independently without colliding on one file.
 
 from __future__ import annotations
 
+import importlib.util
 import subprocess
 import sys
 from pathlib import Path
@@ -44,8 +45,21 @@ REQUIRED_CONTROL = {
 }
 
 
+# caselaw_citation_gate verifies an Ed25519 signature over the gate verdict, and
+# Ed25519 has no stdlib implementation -- so its battery needs the `crypto` extra
+# that the dependency-free core install does not carry. SKIP there rather than
+# fail; the other splits in this parametrisation still run.
+_PILOT_OPTIONAL_DEPS = {
+    "caselaw_citation_gate": ("cryptography", "veriker[crypto]"),
+}
+
+
 @pytest.mark.parametrize("pilot", SPLIT_PILOTS)
 def test_split_pilot_battery_is_green(pilot: str) -> None:
+    need = _PILOT_OPTIONAL_DEPS.get(pilot)
+    if need is not None and importlib.util.find_spec(need[0]) is None:
+        pytest.skip(f"{pilot}'s battery needs {need[0]} — install {need[1]}")
+
     battery = _EXAMPLES / pilot / "tests"
     assert battery.is_dir(), f"{pilot} has no tests/ directory"
     proc = subprocess.run(

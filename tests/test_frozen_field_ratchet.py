@@ -37,6 +37,13 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
+# Optional-dependency slice: SKIP cleanly when rfc8785 is absent
+# (installed by `veriker[crypto]`) rather than failing collection. This must
+# precede the imports below, which reach it directly or transitively.
+pytest.importorskip("rfc8785")
+
 import audit_bundle
 from audit_bundle.revocation import RevocationList
 
@@ -99,6 +106,13 @@ RUNTIME_FROZEN: frozenset[str] = frozenset(
         # at the bottom of this file.
         "plugins/reference/agent_ladder.py::ToolSchema.tools",
         "plugins/reference/agent_ladder.py::LadderSpec.sink_assignment",
+        # multi_root Admission: the face (rows), the denominator's receipt, and the
+        # withheld map are deep-frozen in __post_init__; a row edited in place after
+        # admission would be a state laundered past the receipt. Runtime behavior
+        # locked by tests/test_multi_root.py::test_admission_is_deeply_immutable_and_still_serialises.
+        "multi_root/roster.py::Admission.rows",
+        "multi_root/roster.py::Admission.receipt",
+        "multi_root/roster.py::Admission.withheld",
     }
 )
 

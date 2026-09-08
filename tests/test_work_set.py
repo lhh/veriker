@@ -69,7 +69,13 @@ PASS, FAIL, COULD_NOT_CONCLUDE = 0, 1, 2
 _VERTICAL = "corner_load_vertical_residual"
 _PITCH = "corner_load_pitch_residual"
 _ROLL = "corner_load_roll_residual"
-_CORNER_PINS = {_VERTICAL: _VERTICAL, _PITCH: _PITCH, _ROLL: _ROLL}
+# Channel 4, added 2026-09-03. Not a residual: it binds the front/rear split of
+# lateral transfer to an offline calibration. Listed here because this file's
+# work-sets must cover the pilot's anchored type keys COMPLETELY -- a type added
+# to the spec and not named here is a delivered-but-not-named violation, which
+# is exactly what four cells in this file reported when the channel landed.
+_SPLIT = "corner_load_transfer_split_residual"
+_CORNER_PINS = {_VERTICAL: _VERTICAL, _PITCH: _PITCH, _ROLL: _ROLL, _SPLIT: _SPLIT}
 
 # The true vertical residual of a uniformly +15 N payload — what makes a decoy
 # re-derive cleanly. Pinned so a fixture drift fails loudly instead of quietly
@@ -104,6 +110,15 @@ def _run_verify(bundle_dir: Path) -> subprocess.CompletedProcess:
     )
 
 
+def _derived_corner_work_set() -> WorkSet:
+    """The pilot's DERIVED set (auditor_entry._work_set), loaded by path under
+    a unique name -- `auditor_entry` is not a unique module name in the fleet."""
+    ae = _import_from_path(
+        "corner_load_work_set.auditor_entry", _PILOT_DIR / "auditor_entry.py"
+    )
+    return ae._work_set()
+
+
 def _verify_lib(bundle_dir: Path, *, work_set: WorkSet | None):
     """A library verifier over the pilot's anchored authority, work-set
     optional — the unconfigured (fallback-only) configuration has to be tested
@@ -129,7 +144,7 @@ def _verify_lib(bundle_dir: Path, *, work_set: WorkSet | None):
 def _corner_work_set(**kw) -> WorkSet:
     return WorkSet.declare(
         _CORNER_PINS,
-        source="test: the three corner_load residual channels",
+        source="test: the corner_load channels -- three residuals plus the transfer split",
         provenance="SELF_AUTHORED",
         **kw,
     )
@@ -249,12 +264,24 @@ def _codes(verdict) -> list[tuple[str, str]]:
 def test_the_honest_bundle_passes_and_the_face_names_the_set(
     clean_bundle: Path,
 ) -> None:
+    # Two paths, two honest faces. The front door is the shipped CLI reading
+    # the committed work-set FILE (2026-09-06): the CLI cannot verify a claim
+    # of derivation from bytes, so it labels the set SELF_AUTHORED. The
+    # miner's library path DERIVES the set from the anchored spec and says
+    # EXTERNAL_STRUCTURE. Both name the set; neither borrows the other's label.
     result = _run_verify(clean_bundle)
     assert result.returncode == PASS, result.stderr
-    row = next(ln for ln in result.stdout.splitlines() if "type_selection:" in ln)
+    row = next(ln for ln in result.stdout.splitlines() if "type_selection" in ln)
     assert "WORK-SET APPLIED" in row
-    assert "provenance=EXTERNAL_STRUCTURE" in row, row
-    assert "n_expected=3" in row and "n_withheld=0" in row, row
+    assert "provenance=SELF_AUTHORED" in row, row
+    assert "n_expected=4" in row and "n_withheld=0" in row, row
+    verdict = _verify_lib(clean_bundle, work_set=_derived_corner_work_set())
+    lib_row = next(
+        d for d in verdict.completeness.disclosures if d.startswith("type_selection:")
+    )
+    assert "WORK-SET APPLIED" in lib_row
+    assert "provenance=EXTERNAL_STRUCTURE" in lib_row, lib_row
+    assert "n_expected=4" in lib_row and "n_withheld=0" in lib_row, lib_row
 
 
 def test_the_face_source_sha_is_the_anchored_specs_sha(clean_bundle: Path) -> None:
@@ -270,8 +297,10 @@ def test_the_face_source_sha_is_the_anchored_specs_sha(clean_bundle: Path) -> No
         if d.startswith("spec_anchor_provenance:")
     )
     assert want in prov
-    result = _run_verify(clean_bundle)
-    row = next(ln for ln in result.stdout.splitlines() if "type_selection:" in ln)
+    verdict = _verify_lib(clean_bundle, work_set=_derived_corner_work_set())
+    row = next(
+        d for d in verdict.completeness.disclosures if d.startswith("type_selection:")
+    )
     assert f"source_sha={want}" in row, row
 
 
@@ -287,8 +316,10 @@ def test_an_unlisted_output_id_is_refused(clean_bundle: Path, tmp_path) -> None:
 
     result = _run_verify(bundle)
     assert result.returncode == FAIL, result.stdout + result.stderr
-    assert "WORK_SET_VIOLATION" in result.stderr
-    assert "delivered-but-not-named=['extra_vertical']" in result.stderr, result.stderr
+    assert "WORK_SET_VIOLATION" in (result.stdout + result.stderr)
+    assert "delivered-but-not-named=['extra_vertical']" in (
+        result.stdout + result.stderr
+    ), result.stdout + result.stderr
 
 
 def test_a_duplicated_entry_is_refused(clean_bundle: Path, tmp_path) -> None:
@@ -301,8 +332,10 @@ def test_a_duplicated_entry_is_refused(clean_bundle: Path, tmp_path) -> None:
 
     result = _run_verify(bundle)
     assert result.returncode == FAIL, result.stdout + result.stderr
-    assert "WORK_SET_VIOLATION" in result.stderr
-    assert f"delivered-more-than-once=['{_VERTICAL}']" in result.stderr, result.stderr
+    assert "WORK_SET_VIOLATION" in (result.stdout + result.stderr)
+    assert f"delivered-more-than-once=['{_VERTICAL}']" in (
+        result.stdout + result.stderr
+    ), result.stdout + result.stderr
 
 
 def test_dropping_a_pinned_claim_with_a_decoy_is_a_reject(
@@ -319,9 +352,13 @@ def test_dropping_a_pinned_claim_with_a_decoy_is_a_reject(
 
     result = _run_verify(bundle)
     assert result.returncode == FAIL, result.stdout + result.stderr
-    assert "WORK_SET_VIOLATION" in result.stderr
-    assert f"named-but-not-delivered=['{_VERTICAL}']" in result.stderr, result.stderr
-    assert "delivered-but-not-named=['decoy_vertical']" in result.stderr, result.stderr
+    assert "WORK_SET_VIOLATION" in (result.stdout + result.stderr)
+    assert f"named-but-not-delivered=['{_VERTICAL}']" in (
+        result.stdout + result.stderr
+    ), result.stdout + result.stderr
+    assert "delivered-but-not-named=['decoy_vertical']" in (
+        result.stdout + result.stderr
+    ), result.stdout + result.stderr
 
 
 def test_a_retype_is_still_refused_by_the_pin(clean_bundle: Path, tmp_path) -> None:
@@ -332,8 +369,8 @@ def test_a_retype_is_still_refused_by_the_pin(clean_bundle: Path, tmp_path) -> N
 
     result = _run_verify(bundle)
     assert result.returncode == FAIL, result.stdout + result.stderr
-    assert "ROLE_POLICY_VIOLATION" in result.stderr
-    assert _VERTICAL in result.stderr
+    assert "ROLE_POLICY_VIOLATION" in (result.stdout + result.stderr)
+    assert _VERTICAL in (result.stdout + result.stderr)
 
 
 def test_a_retype_plus_decoy_is_refused_twice(clean_bundle: Path, tmp_path) -> None:
@@ -345,9 +382,11 @@ def test_a_retype_plus_decoy_is_refused_twice(clean_bundle: Path, tmp_path) -> N
 
     result = _run_verify(bundle)
     assert result.returncode == FAIL, result.stdout + result.stderr
-    assert "ROLE_POLICY_VIOLATION" in result.stderr
-    assert "WORK_SET_VIOLATION" in result.stderr
-    assert "delivered-but-not-named=['decoy_vertical']" in result.stderr
+    assert "ROLE_POLICY_VIOLATION" in (result.stdout + result.stderr)
+    assert "WORK_SET_VIOLATION" in (result.stdout + result.stderr)
+    assert "delivered-but-not-named=['decoy_vertical']" in (
+        result.stdout + result.stderr
+    )
 
 
 def test_total_omission_against_a_work_set_is_a_reject(
@@ -361,9 +400,9 @@ def test_total_omission_against_a_work_set_is_a_reject(
 
     result = _run_verify(bundle)
     assert result.returncode == FAIL, result.stdout + result.stderr
-    assert "WORK_SET_VIOLATION" in result.stderr
+    assert "WORK_SET_VIOLATION" in (result.stdout + result.stderr)
     for oid in (_VERTICAL, _PITCH, _ROLL):
-        assert oid in result.stderr
+        assert oid in (result.stdout + result.stderr)
 
 
 def test_deleting_the_declaration_but_leaving_the_files_is_refused(
@@ -379,8 +418,8 @@ def test_deleting_the_declaration_but_leaving_the_files_is_refused(
 
     result = _run_verify(bundle)
     assert result.returncode == FAIL, result.stdout + result.stderr
-    assert "WORK_SET_VIOLATION" in result.stderr
-    assert "COVERAGE_MISMATCH" in result.stderr
+    assert "WORK_SET_VIOLATION" in (result.stdout + result.stderr)
+    assert "COVERAGE_MISMATCH" in (result.stdout + result.stderr)
 
 
 # --------------------------------------------------------------------------
@@ -861,7 +900,7 @@ def test_the_held_documents_cannot_be_mutated_in_place() -> None:
     assert ws.universe["source"] != "edited"
     rec = ws.receipt
     rec["n_covered"] = 0
-    assert ws.receipt["n_covered"] == 3
+    assert ws.receipt["n_covered"] == 4
     with pytest.raises(AttributeError):
         ws.universe_sha = "x"  # type: ignore[misc]
     ws.check_delivery([{"output_id": oid} for oid, _ in ws.pins])  # still applies
@@ -923,9 +962,9 @@ def test_an_overlong_output_id_is_refused_before_any_filesystem_call(
 
     result = _run_verify(bundle)
     assert result.returncode == FAIL, result.stdout + result.stderr
-    assert "VERIFIER_INTERNAL_ERROR" not in result.stderr
-    assert "WORK_SET_VIOLATION" in result.stderr
-    assert "OUTPUT_ID_UNSAFE" in result.stderr
+    assert "VERIFIER_INTERNAL_ERROR" not in (result.stdout + result.stderr)
+    assert "WORK_SET_VIOLATION" in (result.stdout + result.stderr)
+    assert "OUTPUT_ID_UNSAFE" in (result.stdout + result.stderr)
     # and the drift REJECT is not swallowed either
     drift = _copy(clean_bundle, tmp_path, "long_id_drift")
     _offset_every_corner(drift, 15.0)
@@ -940,7 +979,7 @@ def test_an_overlong_output_id_is_refused_before_any_filesystem_call(
     _write_manifest(drift, manifest)
     result = _run_verify(drift)
     assert result.returncode == FAIL, result.stdout + result.stderr
-    assert "RE_DERIVATION_MISMATCH" in result.stderr
+    assert "RE_DERIVATION_MISMATCH" in (result.stdout + result.stderr)
 
 
 def test_a_250_char_output_id_is_still_admitted() -> None:

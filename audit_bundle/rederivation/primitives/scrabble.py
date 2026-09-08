@@ -41,10 +41,11 @@ Stdlib-only (§C5 core verify() path).
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
 from ...admission import admit_json_file
+from ...iso8601 import parse_iso8601_utc
 from ...plugin import ParsedInputs, RecomputedValue
 from ..registry import register_primitive
 from ._safepath import resolve_within
@@ -64,9 +65,10 @@ def _parse_iso(ts: str) -> datetime:
 
     Mirrors examples/scrabble_minimal/scrabble_recompute._parse_iso EXACTLY.
     """
-    if ts.endswith("Z"):
-        ts = ts[:-1] + "+00:00"
-    return datetime.fromisoformat(ts).astimezone(timezone.utc)
+    # Was a local copy whose `astimezone` read a NAIVE timestamp in the
+    # verifier machine's zone (measured: the same input parsed nine hours
+    # apart under TZ=Asia/Tokyo). A naive timestamp is now refused.
+    return parse_iso8601_utc(ts)
 
 
 def _read_wordlist(path: Path) -> set[str]:

@@ -23,7 +23,8 @@ WHAT IS REAL HERE (offline, non-tautological):
   * `verify_inclusion_proof` — the canonical RFC 6962 §2.1.1 inclusion-proof recompute. Real
     teeth: a tampered hash, a wrong root, a wrong index, or a wrong leaf all fail.
   * `verify_checkpoint_signature` — parses Rekor's Go signed-note checkpoint and verifies its
-    ECDSA P-256 signature against the pinned `rekor.sigstore.dev` log key.
+    log signature against the pinned log key (ECDSA P-256 for the Rekor v1
+    `rekor.sigstore.dev` log; Ed25519 for tile-backed Rekor v2 logs).
   * `assemble_rekor_backed_statement` / `register_signed_statement` — the bundle shape plus a
     transport-abstracted registration client (replayable for tests).
 
@@ -41,9 +42,10 @@ The two former "deferred fidelity" gaps are now pinned empirically against live 
     line 3 = base64 root hash), a BLANK separator line, then one or more signature lines
     `— <name> <base64(4-byte key-hint || ECDSA-DER-sig)>`. The SIGNED bytes are the body
     plus a single trailing newline (`checkpoint.split("\\n\\n", 1)[0] + "\\n"`); the blank
-    line and signature block are NOT signed. Rekor's `rekor.sigstore.dev` log key is ECDSA
-    P-256 (NOT Ed25519); the 4-byte key-hint is `SHA256(DER SubjectPublicKeyInfo)[:4]`, which
-    also equals the leading 4 bytes of every active-shard entry's `logID`. The pinned key is
+    line and signature block are NOT signed. The v1 `rekor.sigstore.dev` log key is ECDSA
+    P-256 with key-hint `SHA256(DER SubjectPublicKeyInfo)[:4]`; Rekor v2 logs sign with
+    Ed25519 and the c2sp hint `SHA256(name ‖ "\n" ‖ 0x01 ‖ raw)[:4]` (see `rekor_key_hint`);
+    either hint equals the leading 4 bytes of that log's entry `logID`. The pinned key is
     `REKOR_SIGSTORE_LOG_PUBLIC_KEY_PEM` (provenance: GET .../api/v1/log/publicKey).
 
 WHAT REMAINS DEFERRED (gated, NOT a fidelity gap):
@@ -51,7 +53,7 @@ WHAT REMAINS DEFERRED (gated, NOT a fidelity gap):
   * NEXI signing its OWN Signed Statement under a Fulcio-rooted keyless release identity, and
     registering its own releases to the log (a write and a posture decision). The Ed25519
     issuer-statement path lives in `release/scitt_signed_statement.py`, not here; the
-    checkpoint path above uses its own (ECDSA P-256) key type.
+    checkpoint path above uses the LOG's key type (P-256 for v1, Ed25519 for v2).
 
 Tier-2 / network-substrate side (sibling to c18_tuf_client.py). Pure-stdlib Merkle (hashlib);
 checkpoint-sig and key load use `cryptography` (an existing substrate dep). MUST NOT be pulled
@@ -66,12 +68,13 @@ from __future__ import annotations
 import base64
 import binascii
 import hashlib
+from audit_bundle.strict_json import strict_json_loads
 from dataclasses import dataclass
 from typing import Protocol
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.asymmetric import ec, ed25519
 from cryptography.hazmat.primitives.serialization import (
     Encoding,
     PublicFormat,
@@ -214,9 +217,11 @@ def verify_inclusion_proof(leaf_preimage: bytes, anchor: RekorAnchor) -> bool:
 #: Provenance: GET https://rekor.sigstore.dev/api/v1/log/publicKey (a public, read-only fetch).
 #: SHA-256(DER SubjectPublicKeyInfo) = c0d23d6ad406973f9559f3ba2d1ca01f84147d8ffc5b8445c224f98b9591801d.
 #: Its 4-byte prefix (c0d23d6a) is BOTH the checkpoint signed-note key-hint AND the leading
-#: bytes of every active-shard entry's `logID`. Pinned here as the trust anchor; in the C18
-#: substrate it can equivalently be resolved from the `sigstore-trust-root` TUF role
-#: (c18_tuf_client.fetch_sigstore_trust_root, which already requires `rekor.pub`).
+#: bytes of every active-shard entry's `logID`. Documented REAL bytes, kept so the tests
+#: over the captured production entry have a known key. Since 2026-09-02 the shipped
+#: consumer (`veriker/cli/host_digest_verify.py`) does NOT read this constant: it resolves the
+#: log key from the `sigstore-trust-root` TUF role (`c18_tuf_client.fetch_sigstore_trust_root_key`,
+#: entry `rekor.pub`), whose ceremony-filled digest must equal sha256 of the served PEM.
 REKOR_SIGSTORE_LOG_PUBLIC_KEY_PEM = (
     b"-----BEGIN PUBLIC KEY-----\n"
     b"MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE2G2Y+2tabdTV5BcGiBIx0a9fAFwr\n"
@@ -225,13 +230,20 @@ REKOR_SIGSTORE_LOG_PUBLIC_KEY_PEM = (
 )
 
 
+RekorLogKey = ec.EllipticCurvePublicKey | ed25519.Ed25519PublicKey
+
+
 def load_rekor_log_public_key(
     pem: bytes | None = None,
-) -> ec.EllipticCurvePublicKey:
-    """Load the Rekor log public key (ECDSA P-256). Defaults to the pinned published key.
+) -> RekorLogKey:
+    """Load a Rekor log public key. Defaults to the pinned production (v1) key.
 
-    Raises :class:`RekorAnchorError` if the PEM is not an ECDSA P-256 (secp256r1) key. That
-    is the Rekor checkpoint key type, distinct from the Ed25519 issuer-statement key.
+    Two key types are Rekor checkpoint keys: ECDSA P-256 (the `rekor.sigstore.dev` v1
+    log) and Ed25519 (the tile-backed Rekor v2 logs, e.g. `log2025-alpha3.rekor.sigstage.dev`
+    — grounded on `tests/fixtures/sigstore_staging_bundle_v0_3.json`, whose checkpoint
+    verifies under the Ed25519 key captured in `sigstore_staging_trust_anchors.json`).
+    Raises :class:`RekorAnchorError` for any other key type. Which key is PINNED is the
+    caller's decision; this function only refuses to load a key no Rekor log signs with.
     """
     try:
         key = load_pem_public_key(
@@ -239,19 +251,34 @@ def load_rekor_log_public_key(
         )
     except (ValueError, TypeError) as exc:
         raise RekorAnchorError(f"could not parse Rekor log public key: {exc}") from exc
-    if not isinstance(key, ec.EllipticCurvePublicKey) or key.curve.name != "secp256r1":
-        raise RekorAnchorError(
-            "Rekor log key must be ECDSA P-256 (secp256r1); got "
-            f"{type(key).__name__}/{getattr(getattr(key, 'curve', None), 'name', '?')}"
-        )
-    return key
+    if isinstance(key, ec.EllipticCurvePublicKey) and key.curve.name == "secp256r1":
+        return key
+    if isinstance(key, ed25519.Ed25519PublicKey):
+        return key
+    raise RekorAnchorError(
+        "Rekor log key must be ECDSA P-256 (secp256r1) or Ed25519; got "
+        f"{type(key).__name__}/{getattr(getattr(key, 'curve', None), 'name', '?')}"
+    )
 
 
-def rekor_key_hint(rekor_log_pubkey: ec.EllipticCurvePublicKey) -> bytes:
-    """The 4-byte signed-note key-hint for a Rekor log key = SHA-256(DER SPKI)[:4].
+def rekor_key_hint(
+    rekor_log_pubkey: RekorLogKey, note_name: str | None = None
+) -> bytes:
+    """The 4-byte signed-note key-hint that names `rekor_log_pubkey` on a signature line.
 
-    Empirically equals the checkpoint signature-line prefix and the entry logID prefix.
+    Two conventions, by key type — both grounded on real checkpoints:
+      * ECDSA P-256 (Rekor v1): `SHA-256(DER SubjectPublicKeyInfo)[:4]`. Equals the
+        signature-line prefix and the entry logID prefix on `rekor.sigstore.dev`.
+      * Ed25519 (Rekor v2, c2sp.org/signed-note): `SHA-256(name ‖ "\\n" ‖ 0x01 ‖ raw32)[:4]`,
+        where `name` is the signature line's own name (the log origin). Equals the entry
+        logID prefix on the staging v2 log. `note_name` is REQUIRED for this key type; the
+        hint is a function of the name, so it must be computed per signature line.
     """
+    if isinstance(rekor_log_pubkey, ed25519.Ed25519PublicKey):
+        if note_name is None:
+            raise RekorAnchorError("Ed25519 key hint needs the signature line's name")
+        raw = rekor_log_pubkey.public_bytes(Encoding.Raw, PublicFormat.Raw)
+        return hashlib.sha256(note_name.encode("utf-8") + b"\n\x01" + raw).digest()[:4]
     der = rekor_log_pubkey.public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo)
     return hashlib.sha256(der).digest()[:4]
 
@@ -329,35 +356,54 @@ def parse_checkpoint_note(checkpoint: bytes) -> CheckpointNote:
 
 
 def verify_checkpoint_signature(
-    checkpoint: bytes, rekor_log_pubkey: ec.EllipticCurvePublicKey
+    checkpoint: bytes, rekor_log_pubkey: RekorLogKey
 ) -> bool:
-    """Verify the ECDSA P-256 signature carried in a Rekor checkpoint against the log key.
+    """Verify the log's signature carried in a Rekor checkpoint against the log key.
 
     Parses the signed-note (`parse_checkpoint_note`), selects the signature line whose 4-byte
-    key-hint matches `rekor_log_pubkey`, and ECDSA/SHA-256-verifies it over the note's signed
-    body. The signature is embedded IN the checkpoint (a Go signed-note), not supplied
-    separately. Returns False on a malformed note, a missing matching signature, or a bad
-    signature.
+    key-hint matches `rekor_log_pubkey` (hint convention by key type — see `rekor_key_hint`),
+    and verifies it over the note's signed body: ECDSA/SHA-256 for a P-256 key (Rekor v1),
+    pure Ed25519 for an Ed25519 key (Rekor v2). Witness co-signature lines on a v2 checkpoint
+    carry other names and other hints and are simply not selected — this verifies the LOG's
+    signature only, never a witness quorum. The signature is embedded IN the checkpoint (a Go
+    signed-note), not supplied separately. Returns False on a malformed note, a missing
+    matching signature, or a bad signature.
 
-    GROUNDED: verifies the real `rekor.sigstore.dev` checkpoint in
-    `tests/fixtures/rekor_real_entry_v1.json` against the pinned ECDSA P-256 log key.
+    GROUNDED: verifies the real `rekor.sigstore.dev` v1 checkpoint in
+    `tests/fixtures/rekor_real_entry_v1.json` against the pinned ECDSA P-256 log key, and the
+    real `log2025-alpha3.rekor.sigstage.dev` v2 checkpoint in
+    `tests/fixtures/sigstore_staging_bundle_v0_3.json` against the captured Ed25519 key.
     """
+    return _verified_checkpoint_hint(checkpoint, rekor_log_pubkey) is not None
+
+
+def _verified_checkpoint_hint(
+    checkpoint: bytes,
+    rekor_log_pubkey: ec.EllipticCurvePublicKey | ed25519.Ed25519PublicKey,
+) -> bytes | None:
+    """The 4-byte key-hint of the signature line that VERIFIED under the log key,
+    or None (malformed note, no matching line, bad signature). `verify_checkpoint_signature`
+    is the boolean view; `verify_anchor` uses the hint to bind the entry's logID."""
     try:
         note = parse_checkpoint_note(checkpoint)
     except RekorAnchorError:
-        return False
-    key_hint = rekor_key_hint(rekor_log_pubkey)
-    for _name, hint, signature in note.signatures:
+        return None
+    is_ed = isinstance(rekor_log_pubkey, ed25519.Ed25519PublicKey)
+    for name, hint, signature in note.signatures:
+        key_hint = rekor_key_hint(rekor_log_pubkey, name if is_ed else None)
         if hint != key_hint:
             continue
         try:
-            rekor_log_pubkey.verify(
-                signature, note.signed_body, ec.ECDSA(hashes.SHA256())
-            )
-            return True
+            if is_ed:
+                rekor_log_pubkey.verify(signature, note.signed_body)
+            else:
+                rekor_log_pubkey.verify(
+                    signature, note.signed_body, ec.ECDSA(hashes.SHA256())
+                )
+            return hint
         except InvalidSignature:
-            return False
-    return False  # no signature line matched the pinned log key's hint
+            return None
+    return None  # no signature line matched the pinned log key's hint
 
 
 def assemble_rekor_backed_statement(
@@ -412,8 +458,23 @@ class ReplayTransport:
 
 
 class LiveRekorTransport:
-    """Placeholder for the live network transport. Deferred to a runner with network access
-    and a pinned Rekor endpoint. Raises until that wiring lands, so it cannot silently no-op."""
+    """GATED live network transport. Raises until the gate is flipped, so it cannot no-op.
+
+    It exists for registering NEXI's OWN SCITT signed statement natively
+    (`register_signed_statement`). Nothing in the release path calls it: cosign is the
+    SOLE Rekor writer for release artifacts (`sign-blob`, `attest-blob` for the
+    image-binding bundle, `sign` / `attest` into the registry), so a release is
+    checkable with this gated. Flipping it is three things in order — a posture
+    decision (native registration is a further public, irreversible disclosure), an
+    implementation of `submit` (POST `<rekor>/api/v1/log/entries`, returning the v1
+    REST `(logID, verification)` shape) on a networked runner, and
+    `register_signed_statement(verify=True)` so a proof that does not re-derive its
+    own root refuses at registration. The first live entry is checked against the
+    key resolved from the `sigstore-trust-root` role (`verify_anchor` also refuses
+    an entry whose logID does not lead with that key's hint) and
+    `rekor_body_subject_digests` naming the intended digest — the ceremony
+    runbook lists the manual checks beside these. `ReplayTransport` is the
+    offline default."""
 
     def __init__(self, base_url: str) -> None:
         self._base_url = base_url
@@ -527,6 +588,151 @@ REASON_INCLUSION_PROOF_FAILED = "INCLUSION_PROOF_DOES_NOT_REDERIVE_ROOT"
 REASON_CHECKPOINT_SIGNATURE_INVALID = "CHECKPOINT_SIGNATURE_INVALID"
 REASON_CHECKPOINT_NOT_EVALUATED = "CHECKPOINT_SIGNATURE_NOT_EVALUATED"
 REASON_CHECKPOINT_ROOT_MISMATCH = "CHECKPOINT_ROOT_DISAGREES_WITH_INCLUSION_PROOF"
+REASON_LOG_ID_DISAGREES_WITH_CHECKPOINT_KEY = "REKOR_LOG_ID_DISAGREES_WITH_CHECKPOINT_KEY"
+
+# --- Subject binding: what does the logged LEAF commit to? ---------------------------------
+# An inclusion proof + signed checkpoint prove "these leaf bytes are in the log". That is
+# true of every public entry. A verdict about OUR artifact needs the leaf's CONTENT to commit
+# to a digest the verifier holds. These codes are distinct from the proof codes above so a
+# binding failure is attributable as binding, never mistaken for a broken proof.
+REASON_SUBJECT_NOT_BOUND = "REKOR_SUBJECT_NOT_BOUND"
+REASON_BODY_KIND_UNSUPPORTED = "REKOR_BODY_KIND_UNSUPPORTED"
+REASON_BODY_UNPARSEABLE = "REKOR_BODY_UNPARSEABLE"
+REASON_DSSE_PAYLOAD_ABSENT = "REKOR_DSSE_PAYLOAD_ABSENT"
+REASON_DSSE_PAYLOAD_HASH_MISMATCH = "REKOR_DSSE_PAYLOAD_HASH_MISMATCH"
+REASON_PREDICATE_TYPE_MISMATCH = "REKOR_PREDICATE_TYPE_MISMATCH"
+
+#: in-toto predicateType of the release IMAGE-BINDING attestation (cosign
+#: attest-blob over the image manifest bytes). The producer (release job) pins
+#: to this string; `intoto_predicate_type` reads it back off a logged statement
+#: so a consumer can require THIS attestation kind rather than any statement that
+#: happens to name the digest among its subjects.
+IMAGE_BINDING_PREDICATE_TYPE = "https://vkernel.dev/predicates/release-image-binding/v1"
+
+_SHA256_ALGS = frozenset({"sha256", "sha2_256", "sha-256", "sha2-256"})
+
+
+def _sha256_hex_or_none(algorithm: object, value: object, *, b64: bool) -> str | None:
+    """Normalise one (algorithm, value) digest pair to `sha256:<64 hex>`; None if not sha256."""
+    if not isinstance(algorithm, str) or algorithm.lower() not in _SHA256_ALGS:
+        return None
+    if not isinstance(value, str):
+        return None
+    try:
+        raw = base64.b64decode(value, validate=True) if b64 else bytes.fromhex(value)
+    except (ValueError, binascii.Error):
+        return None
+    if len(raw) != 32:
+        return None
+    return "sha256:" + raw.hex()
+
+
+def intoto_predicate_type(payload: bytes) -> str | None:
+    """The `predicateType` an in-toto Statement payload declares, or None."""
+    try:
+        stmt = strict_json_loads(payload)
+    except (ValueError, UnicodeDecodeError, RecursionError):
+        return None
+    if not isinstance(stmt, dict):
+        return None
+    pt = stmt.get("predicateType")
+    return pt if isinstance(pt, str) else None
+
+
+def _intoto_subject_digests(payload: bytes) -> frozenset[str]:
+    """sha256 subject digests named by an in-toto Statement (v0.1 or v1) payload."""
+    try:
+        stmt = strict_json_loads(payload)
+    except (ValueError, UnicodeDecodeError, RecursionError):
+        return frozenset()
+    if not isinstance(stmt, dict) or not isinstance(stmt.get("subject"), list):
+        return frozenset()
+    out: set[str] = set()
+    for subj in stmt["subject"]:
+        digest = subj.get("digest") if isinstance(subj, dict) else None
+        if not isinstance(digest, dict):
+            continue
+        for alg, val in digest.items():
+            norm = _sha256_hex_or_none(alg, val, b64=False)
+            if norm is not None:
+                out.add(norm)
+    return frozenset(out)
+
+
+def rekor_body_subject_digests(
+    body: dict, dsse_payload: bytes | None
+) -> tuple[frozenset[str], str | None, str | None]:
+    """The `sha256:<hex>` digests a decoded Rekor entry body commits to, by entry kind.
+
+    Returns `(digests, bound_via, reason)`. `bound_via` names the path the digests came from
+    (printed on the verdict face); `reason` is a `REASON_*` code when NO binding is possible.
+    Deny-by-default: an entry kind this function does not know is `REKOR_BODY_KIND_UNSUPPORTED`,
+    never "assume the caller knows what they logged".
+
+      * `hashedrekord` v0.0.1 — `spec.data.hash{algorithm,value(hex)}` (cosign `sign-blob`
+        on Rekor v1: the digest IS sha256 of the signed blob).
+      * `hashedrekord` v0.0.2 — `spec.hashedRekordV002.data{algorithm,digest(base64)}`
+        (Rekor v2; grounded on `tests/fixtures/sigstore_staging_bundle_v0_3.json`).
+      * `dsse` v0.0.1 — `spec.payloadHash` is sha256 of the DSSE payload. The body carries the
+        HASH only, so the caller must supply the payload (the bundle's `dsseEnvelope.payload`);
+        sha256(payload) must equal the logged hash, and the digests are then the in-toto
+        Statement's `subject[*].digest.sha256`. A payload whose hash does not match is
+        `REKOR_DSSE_PAYLOAD_HASH_MISMATCH` (a forged statement beside an honest log entry);
+        no payload is `REKOR_DSSE_PAYLOAD_ABSENT`.
+      * `intoto` v0.0.2 — `spec.content.payloadHash`, then as for `dsse`.
+    """
+    kind = body.get("kind")
+    spec = body.get("spec")
+    if not isinstance(spec, dict):
+        return frozenset(), None, REASON_BODY_UNPARSEABLE
+
+    if kind == "hashedrekord":
+        v002 = spec.get("hashedRekordV002")
+        if isinstance(v002, dict):
+            data = v002.get("data") if isinstance(v002.get("data"), dict) else {}
+            norm = _sha256_hex_or_none(
+                data.get("algorithm"), data.get("digest"), b64=True
+            )
+        else:
+            data = spec.get("data") if isinstance(spec.get("data"), dict) else {}
+            h = data.get("hash") if isinstance(data.get("hash"), dict) else {}
+            norm = _sha256_hex_or_none(h.get("algorithm"), h.get("value"), b64=False)
+        if norm is None:
+            return frozenset(), None, REASON_BODY_UNPARSEABLE
+        return frozenset({norm}), "hashedrekord.data.digest", None
+
+    if kind in ("dsse", "intoto"):
+        if kind == "dsse":
+            ph = spec.get("payloadHash")
+        else:
+            content = (
+                spec.get("content") if isinstance(spec.get("content"), dict) else {}
+            )
+            ph = content.get("payloadHash")
+        if not isinstance(ph, dict):
+            return frozenset(), None, REASON_BODY_UNPARSEABLE
+        logged = _sha256_hex_or_none(ph.get("algorithm"), ph.get("value"), b64=False)
+        if logged is None:
+            return frozenset(), None, REASON_BODY_UNPARSEABLE
+        if dsse_payload is None:
+            return frozenset(), None, REASON_DSSE_PAYLOAD_ABSENT
+        if "sha256:" + hashlib.sha256(dsse_payload).hexdigest() != logged:
+            return frozenset(), None, REASON_DSSE_PAYLOAD_HASH_MISMATCH
+        via = f"{kind}.payloadHash->in-toto.subject"
+        return _intoto_subject_digests(dsse_payload), via, None
+
+    return frozenset(), None, REASON_BODY_KIND_UNSUPPORTED
+
+
+def sigstore_bundle_dsse_payload(bundle: dict) -> bytes | None:
+    """The decoded `dsseEnvelope.payload` of a Sigstore v0.3 bundle, or None if absent/bad."""
+    env = bundle.get("dsseEnvelope")
+    if not isinstance(env, dict) or not isinstance(env.get("payload"), str):
+        return None
+    try:
+        return base64.b64decode(env["payload"], validate=True)
+    except (ValueError, binascii.Error):
+        return None
 
 
 @dataclass(frozen=True)
@@ -562,7 +768,8 @@ def verify_anchor(
     ``.sigstore-bundle.json``) can verify WITHOUT re-serialising into the assembled-statement
     dict shape:
       1. re-derive the inclusion proof (`verify_inclusion_proof`) — always evaluated;
-      2. verify the checkpoint's ECDSA P-256 signature against Rekor's PINNED log key, and bind
+      2. verify the checkpoint's log signature (P-256 or Ed25519 by key type) against Rekor's
+         PINNED log key, and bind
          the signed checkpoint's root to the inclusion proof's root — ONLY when
          ``rekor_log_pubkey`` is supplied.
 
@@ -578,24 +785,34 @@ def verify_anchor(
 
     checkpoint_ok: bool | None
     if rekor_log_pubkey is not None:
-        sig_ok = verify_checkpoint_signature(anchor.checkpoint, rekor_log_pubkey)
-        if not sig_ok:
+        hint = _verified_checkpoint_hint(anchor.checkpoint, rekor_log_pubkey)
+        if hint is None:
             checkpoint_ok = False
             reasons.append(REASON_CHECKPOINT_SIGNATURE_INVALID)
         else:
-            # Signature valid — now bind the signed checkpoint's root to the proof's root,
-            # else the checkpoint attests a DIFFERENT tree than the inclusion proof re-derives.
+            # Signature valid — now bind the signed checkpoint to the proof: same root
+            # AND same tree size, else the checkpoint attests a DIFFERENT tree head than
+            # the one the inclusion proof re-derives (a signed head of size N with the
+            # proof's root is not a head of size M). Until 2026-09-02 only the root was
+            # compared (fresh-pass witness `w_rekor.py D`: size 999 vs proof size 1).
             try:
                 note = parse_checkpoint_note(anchor.checkpoint)
             except RekorAnchorError:
                 checkpoint_ok = False
                 reasons.append(REASON_CHECKPOINT_SIGNATURE_INVALID)
             else:
-                if note.root_hash == anchor.root_hash:
+                if note.root_hash == anchor.root_hash and note.tree_size == anchor.tree_size:
                     checkpoint_ok = True
                 else:
                     checkpoint_ok = False
                     reasons.append(REASON_CHECKPOINT_ROOT_MISMATCH)
+            # The entry's logID names the log; its leading 4 bytes are the key-hint of
+            # the log's own signature line, so an entry that names a DIFFERENT log than
+            # the key that verified its checkpoint is refused. An empty logID (REST
+            # callers that never carried one) is not compared — disclosed, not graded.
+            if anchor.log_id and not anchor.log_id.lower().startswith(hint.hex()):
+                checkpoint_ok = False
+                reasons.append(REASON_LOG_ID_DISAGREES_WITH_CHECKPOINT_KEY)
     else:
         checkpoint_ok = None
         reasons.append(REASON_CHECKPOINT_NOT_EVALUATED)
@@ -615,7 +832,8 @@ def verify_rekor_backed_statement(
 
     Composes the two real verifiers into one verdict:
       1. re-derive the inclusion proof (`verify_inclusion_proof`) — always evaluated;
-      2. verify the checkpoint's ECDSA P-256 signature against Rekor's PINNED log key
+      2. verify the checkpoint's log signature (P-256 or Ed25519 by key type) against Rekor's
+         PINNED log key
          (`verify_checkpoint_signature`), and bind the signed checkpoint's root to the
          inclusion proof's root — evaluated ONLY when `rekor_log_pubkey` is supplied (e.g. via
          `load_rekor_log_public_key()` or the `sigstore-trust-root` TUF role). The signature is

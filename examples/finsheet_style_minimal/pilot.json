@@ -1,0 +1,41 @@
+{
+  "schema": "pilot.v1",
+  "pilot": "finsheet_style_minimal",
+  "title": "finsheet_style_minimal — V-Kernel S0 pilot (spreadsheet QA re-derivation on a FinSheet-style PE portfolio set)",
+  "domain": "tabular_ml",
+  "expected_verdict": "PASS",
+  "bundle_count": 0,
+  "has_top_level_manifest": false,
+  "has_build_script": true,
+  "schema_versions": [
+    "vcp-v1.1-canary4"
+  ],
+  "typed_checks": [
+    "file_integrity_many_small"
+  ],
+  "attack_classes_covered": [
+    "spec_pinned:tampered_value",
+    "spec_pinned:no_anchor",
+    "spec_pinned:producer_weakened_spec",
+    "spec_pinned:pinned_input_substitution",
+    "model:wrong_arithmetic",
+    "model:wrong_selection",
+    "model:hallucinated_operand"
+  ],
+  "spec_pinned_dispatch": {
+    "output_id": "answer_semantic",
+    "type": "answer_semantic",
+    "conforms_to": "spec/finsheet_demo.spec.json",
+    "comparator_kind": "scalar_epsilon",
+    "binding_spec": "spec_pinned/finsheet_demo.spec.json",
+    "demo": "examples/finsheet_style_minimal/_build_bundle.py --demo --profile wrong_selection"
+  },
+  "last_verified": null,
+  "build_profiles": [
+    "clean",
+    "wrong_arithmetic",
+    "wrong_selection",
+    "hallucinated_operand",
+    "wrong_question"
+  ]
+}

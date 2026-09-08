@@ -26,6 +26,10 @@ import hmac as _hmac
 
 import pytest
 
+# Optional-dependency slice: SKIP cleanly when cbor2 is absent
+# (installed by `veriker[c19]`) rather than failing collection.
+pytest.importorskip("cbor2")
+
 from audit_bundle.extensions.c19.layer_a_counter import (
     _CTX_EVENT,
     _hkdf_expand,

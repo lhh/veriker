@@ -1,104 +1,117 @@
-"""verify.py — corner_load_equilibrium_minimal bundle verifier.
+"""verify.py — corner_load_equilibrium_minimal: the production command, prefilled.
 
-Anchored by default: the SpecAnchor is built from the COMMITTED auditor spec
-bytes via SpecAnchor.from_files(..., forbid_within=bundle_dir), so a producer
-who ships a weakened spec/ copy yields a SHA the anchor does not list and
-dispatch fails closed.
+This front door holds NO verification logic. It runs the same shipped CLI a
+relying party runs, with this pilot's three auditor-held inputs filled in, and
+prints that command before the verdict so a reader sees exactly what they
+would have to hold themselves:
 
-The verifier is constructed in auditor_entry.build_verifier, which hard_negatives.py
-also calls -- one anchored configuration for both auditor-side tools, so a
-hardening here cannot fail to reach the mining path.
+    the anchored spec   spec_pinned/corner_load_equilibrium.spec.json
+    the primitive kit   auditor_kit.py
+    the work-set        spec_pinned/corner_load_equilibrium.work_set.json
 
-require_rederivation=True: this bundle exists FOR its re-derivation property.
-A bundle that re-derives nothing must be a could-not-conclude ERROR (exit 2),
-not a quiet PASS -- deleting manifest.outputs is otherwise a way to make
-dispatch inert and still print PASS.
+Which files are whose. The PRODUCER's are the twin and its bundle writer:
+_producer_solve.py, _producer_surrogate.py, _build_bundle.py. The AUDITOR's
+are the three inputs above plus the tooling around them: auditor_entry.py
+(the one library constructor the miner uses), hard_negatives.py, and this
+file. In production the two halves live on different machines under
+different owners. Here they share a folder so the demo is one command; the
+folder is the demo's compromise, not the product's shape.
+
+Why the CLI and not the library. A front door that built its own verifier
+next to the producer's code taught that producer and verifier share a
+process. The CLI refuses an anchor or kit path that resolves inside the
+bundle, records the anchor's provenance on the face, names which auditor rule
+judged which claim, and can say "could not conclude" (exit 2) when nothing was
+re-derived. Anything this pilot needs that the CLI cannot express is a CLI gap
+to close, not a reason to reach around it: the split channel's coverage line
+("judged 94 of 120 samples") used to be printed here by hand, and now rides
+the CLI's recompute_detail rows for every pilot.
 
 Usage:
     python examples/corner_load_equilibrium_minimal/verify.py --bundle-dir <path>
 
-Exit codes:
+Exit codes (the CLI's, passed through unchanged):
     0  PASS
-    1  FAIL   -- a check concluded against the bundle
-    2  ERROR  -- could not conclude (incl. nothing re-derived)
+    1  FAIL   -- a check concluded against the bundle, or it is not a bundle
+    2  ERROR  -- could not conclude (incl. nothing re-derived, unusable inputs)
 """
 
 from __future__ import annotations
 
 import argparse
+import os
+import shlex
+import subprocess
 import sys
 
 sys.dont_write_bytecode = True
 
 from pathlib import Path  # noqa: E402
 
-_PKG_ROOT = Path(__file__).resolve().parents[2]
-if str(_PKG_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PKG_ROOT))
 _HERE = Path(__file__).resolve().parent
-if str(_HERE) not in sys.path:
-    sys.path.insert(0, str(_HERE))
+_PKG_ROOT = _HERE.parents[1]
+for _p in (str(_PKG_ROOT), str(_HERE)):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
-from auditor_entry import build_verifier  # noqa: E402
-from audit_bundle.rederivation.kit import KitConstructionError  # noqa: E402
-from audit_bundle.rederivation.spec_binding import AnchorConstructionError  # noqa: E402
-from audit_bundle.verdict import exit_code  # noqa: E402
+# ONE definition of the auditor's inputs, shared with the miner's library
+# constructor so the two tools cannot hold different anchors.
+from auditor_entry import KIT_PATH, SPEC_SOURCES, WORK_SET_PATH  # noqa: E402
+
+
+def command(bundle_dir: Path) -> list[str]:
+    """The exact argv this front door runs: the shipped CLI with the auditor's
+    three inputs prefilled. Importable so a test can re-run precisely what
+    was printed and compare verdicts."""
+    return [
+        sys.executable,
+        "-m",
+        "veriker.cli.verify",
+        "--bundle-dir",
+        str(bundle_dir),
+        "--spec-anchor",
+        *[str(p) for p in SPEC_SOURCES],
+        "--primitives",
+        str(KIT_PATH),
+        "--work-set",
+        str(WORK_SET_PATH),
+        "--require-rederivation",
+    ]
+
+
+def display(argv: list[str]) -> str:
+    """The command as a reader would type it: `python` for the interpreter,
+    paths under the package root made relative to it (the subprocess runs
+    from there), everything else verbatim and shell-quoted."""
+    shown: list[str] = []
+    for i, arg in enumerate(argv):
+        if i == 0:
+            shown.append("python")
+            continue
+        try:
+            shown.append(str(Path(arg).relative_to(_PKG_ROOT)))
+        except ValueError:
+            shown.append(arg)
+    return "$ " + " ".join(shlex.quote(x) for x in shown)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="corner_load_equilibrium_minimal audit bundle verifier"
+        description="corner_load_equilibrium_minimal audit bundle verifier "
+        "(the shipped CLI, with this pilot's auditor inputs prefilled)"
     )
     parser.add_argument("--bundle-dir", required=True, type=Path)
     args = parser.parse_args()
-    bundle_dir: Path = args.bundle_dir.resolve()
-
-    # The auditor's two inputs -- the kit and the anchor -- are built before any
-    # verdict exists, and BOTH refuse a path inside the bundle under audit.
-    # Pointing --bundle-dir at the pilot root reaches exactly that: the refusal
-    # is the guard working, but it says nothing about an artifact, so it is an
-    # operator error. It must route to could-not-conclude like every other
-    # could-not-conclude -- not to an uncaught KitConstructionError traceback
-    # exiting 1, which is what it did until 2026-08-31. build_verifier itself
-    # still RAISES: admit_for_mining is its other caller and turns the same
-    # condition into MiningRefused, which is that tool's own contract.
-    try:
-        verifier, _anchor = build_verifier(bundle_dir)
-    except (KitConstructionError, AnchorConstructionError) as exc:
-        print("ERROR  could not conclude", file=sys.stderr)
-        print(f"  AUDITOR_INPUTS_UNUSABLE: {exc}", file=sys.stderr)
-        return 2
-
-    result = verifier.verify(bundle_dir)
-
-    code = exit_code(result)
-
-    # WHICH CLAIMS WERE REQUIRED AND WHICH RULE JUDGED EACH, on the terminal,
-    # not only in the verdict object. A green run is exactly when this matters:
-    # the fallback coverage accounting establishes that every anchored rule was
-    # reached, never that each output was judged by its OWN rule or that no
-    # claim was dropped or smuggled, and a reader who sees a bare "PASS" has no
-    # way to tell those apart. The work-set row names the universe_sha and the
-    # provenance of the set that was applied. veriker/cli/verify.py already prints
-    # selected disclosure prefixes for the same reason -- the JSON is not what
-    # the human reads.
-    for row in getattr(result.completeness, "disclosures", ()) or ():
-        if row.startswith("type_selection:"):
-            print(f"  {row}")
-
-    if result.ok:
-        print("PASS")
-        return 0
-
-    # ADR BI-1 tri-state: a could-not-conclude is a statement about the
-    # VERIFIER, not an accusation against the artifact. Say which one.
-    print("FAIL" if code == 1 else "ERROR  could not conclude", file=sys.stderr)
-    for failure in result.failures:
-        print(
-            f"  [{failure.check_name}] {failure.reason_code}: {failure.detail}",
-            file=sys.stderr,
-        )
-    return code
+    argv = command(args.bundle_dir.resolve())
+    print(display(argv), flush=True)
+    env = dict(os.environ)
+    env.setdefault("PYTHONDONTWRITEBYTECODE", "1")
+    # cwd = package root: `-m veriker.cli.verify` resolves from there in this tree,
+    # and from the installed package in the public drop (the export rewrites
+    # the module path). stdout/stderr are inherited, not captured: the CLI's
+    # face IS this front door's output, unedited.
+    proc = subprocess.run(argv, cwd=_PKG_ROOT, env=env, check=False)
+    return proc.returncode
 
 
 if __name__ == "__main__":

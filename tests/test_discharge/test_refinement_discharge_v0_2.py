@@ -40,6 +40,8 @@ from audit_bundle.discharge.z3_runner import (
     Z3Status,
 )
 
+from tests._optional_deps import requires_z3
+
 
 # ---------------------------------------------------------------------------
 # Manifest stub + helpers
@@ -533,6 +535,7 @@ def test_mixed_records_first_signed_second_unsigned_fails_on_second(tmp_path):
 # ============================================================================
 
 
+@requires_z3
 def test_in_process_z3_real_discharge_through_plugin(tmp_path):
     """End-to-end: refinement '(= (+ a b) total)' with concrete substitution
     a=3, b=4, total=7 — Z3 (in-process) discharges this. Plugin re-runs Z3
@@ -560,6 +563,7 @@ def test_in_process_z3_real_discharge_through_plugin(tmp_path):
     assert "1 re-discharged" in result.detail
 
 
+@requires_z3
 def test_in_process_z3_real_disagreement_caught(tmp_path):
     """Same as above but with a context where the refinement is FALSE
     (a=1+b=2 vs total=99). The verifier signed 'discharged' but Z3 finds
@@ -768,6 +772,7 @@ def test_panel_bug_8_recheck_context_with_unsupported_logic_rejected(tmp_path):
 # ============================================================================
 
 
+@requires_z3
 def test_p3_recheck_smt_z3_uses_extract_refine_text_helper(tmp_path, monkeypatch):
     """Gate 3a P3 (Opus 4.7 §b2 + Sonnet 4.6 §A3, 2026-05-19):
     _recheck_smt_z3 previously hand-rolled the "first outputs[*].type.refine"
@@ -827,6 +832,7 @@ def test_p3_recheck_smt_z3_uses_extract_refine_text_helper(tmp_path, monkeypatch
     )
 
 
+@requires_z3
 def test_p3_recheck_smt_z3_helper_consolidation_smoke(tmp_path):
     """P3 smoke: a legitimately-signed discharged record still re-verifies
     after the helper consolidation. Guards against regression in the
@@ -901,6 +907,7 @@ def _read_single_retained_record(result):
     return json.loads(disclosures[0].split(" — ", 1)[1])
 
 
+@requires_z3
 def test_divergence_record_retained_on_verdict_face(tmp_path):
     """5(a): the runner-vs-claim divergence retains a signed record on the
     verdict face even though the verdict is a hard reject — and writes
@@ -927,6 +934,7 @@ def test_divergence_record_retained_on_verdict_face(tmp_path):
     assert rec["obligation_sha"] == sha
 
 
+@requires_z3
 def test_divergence_record_signature_verifies_and_rejects_replay(tmp_path):
     """5(b): the retained record is signature-verifiable and rejects
     cross-bundle / cross-record / wrong-key replay."""
@@ -996,6 +1004,7 @@ def test_divergence_record_emitted_on_context_substitution_error(tmp_path):
     )
 
 
+@requires_z3
 def test_divergence_path_leaves_bundle_dir_untouched(tmp_path):
     """5(c) (read-only invariant): the divergence path performs NO file IO in
     bundle_dir — retention rides the verdict face, so the reject verdict and

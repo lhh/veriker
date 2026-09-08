@@ -31,6 +31,7 @@ grow on the public side without a red test.
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import re
 import subprocess
@@ -63,8 +64,24 @@ PUBLIC_PILOTS = (
 _COUNT_RE = re.compile(r"(\d+) passed")
 
 
+# Pilots whose battery needs a package the CORE install does not carry. The core
+# declares no dependencies, so these must SKIP on a lean install rather than fail:
+# the three payroll batteries drive an SMT discharge and report
+# Z3_SUBPROCESS_FAILURE without the solver (measured 2026-09-03). Keyed by pilot
+# rather than blanket-skipping the parametrisation, so the other ten still run.
+_PILOT_OPTIONAL_DEPS = {
+    "payroll_acting_discretion_minimal": ("z3", "veriker[dev]"),
+    "payroll_no_cliff_minimal": ("z3", "veriker[dev]"),
+    "payroll_reconciliation_minimal": ("z3", "veriker[dev]"),
+}
+
+
 @pytest.mark.parametrize("pilot", PUBLIC_PILOTS)
 def test_public_pilot_battery_is_green(pilot: str) -> None:
+    need = _PILOT_OPTIONAL_DEPS.get(pilot)
+    if need is not None and importlib.util.find_spec(need[0]) is None:
+        pytest.skip(f"{pilot}'s battery needs {need[0]} — install {need[1]}")
+
     battery = _EXAMPLES / pilot / "tests"
     assert battery.is_dir(), f"{pilot} ships no tests/ battery"
 

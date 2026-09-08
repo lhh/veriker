@@ -23,8 +23,8 @@ if str(_PKG_ROOT) not in sys.path:
 # Import only the C18 helper symbols; this confirms they exist with the
 # documented stdlib-only surface.
 from veriker.cli.verify import (  # noqa: E402
-    _C18_OCI_DIGEST_PATTERN,
-    _c18_extract_verifier_identity,
+    _C18_OCI_DIGEST_PATTERN,  # noqa: F401 — surface pin
+    _c18_locate_verifier_identity,  # noqa: F401 — surface pin
     _c18_structural_check,
 )
 

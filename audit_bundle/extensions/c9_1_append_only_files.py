@@ -69,6 +69,7 @@ Mirrors the schema-reservation pattern shared with S14v3-RES, S17-RES, and S20.
 from __future__ import annotations
 
 import json
+from audit_bundle.strict_json import strict_json_loads
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -507,7 +508,7 @@ def _check_first_match(
                     # line is tolerated exactly like a malformed one here.
                     continue
                 try:
-                    record = json.loads(stripped)
+                    record = strict_json_loads(stripped)
                 except (json.JSONDecodeError, ValueError):
                     # In first_match we tolerate malformed lines BEFORE a match —
                     # declared per OQ-C9.1-2. (An earlier comment claimed
@@ -571,7 +572,7 @@ def _check_all_attributed(
                         first_missing_line = lineno
                     continue
                 try:
-                    record = json.loads(stripped)
+                    record = strict_json_loads(stripped)
                 except (json.JSONDecodeError, ValueError):
                     # In all_attributed mode a malformed line means we cannot
                     # certify the key is present — count as missing.

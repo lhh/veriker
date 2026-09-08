@@ -22,24 +22,21 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from ..._containment import contain
+
 
 def resolve_within(root: Path, rel: str) -> Path:
-    """Join ``rel`` under ``root`` and return the resolved path, refusing escape.
+    """Join ``rel`` under ``root`` and return the resolved path, refusing escape
+    AND any object a blocking read cannot safely open.
 
-    ``rel`` is bundle-controlled (it comes from recipe/timeline data). The join
-    is resolved (following ``..`` segments and symlinks, and letting an absolute
-    ``rel`` discard ``root`` entirely), then asserted to stay inside the resolved
-    ``root``. Anything that escapes — a ``..`` traversal, an absolute path, or a
-    symlink under ``root`` pointing out of tree — raises ValueError so the caller
-    fails closed instead of reading an out-of-bundle file.
+    ``rel`` is bundle-controlled (it comes from recipe/timeline data). Since
+    2026-09-05 this is the package-wide rule in ``audit_bundle._containment``:
+    the join is resolved and asserted to stay inside ``root``; a NUL / lone
+    surrogate is refused; and the unresolved join is ``lstat``-classified so a
+    directory, FIFO, socket or device at the named path is refused BEFORE the
+    caller's ``read_bytes`` can block on it (that half used to live only in the
+    manifest walk's ``_safe_bundle_path``). Every refusal is a ``ValueError``
+    (``ContainmentError`` subclasses it), which the primitive surfaces as a
+    RECOMPUTE_ERROR rather than reading the out-of-bundle or unreadable object.
     """
-    root_resolved = root.resolve()
-    candidate = (root / rel).resolve()
-    try:
-        candidate.relative_to(root_resolved)
-    except ValueError:
-        raise ValueError(
-            f"bundle path {rel!r} resolves outside {root_resolved} — "
-            "refusing the read (path containment)"
-        ) from None
-    return candidate
+    return contain(root, rel)

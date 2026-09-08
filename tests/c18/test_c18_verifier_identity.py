@@ -7,7 +7,6 @@ tripwire signal semantics. All tests stdlib-only (no third-party deps).
 from __future__ import annotations
 
 import hashlib
-import json
 from pathlib import Path
 
 import pytest
@@ -16,7 +15,6 @@ from audit_bundle.extensions.c18_verifier_identity import (
     REASON_BLOCK_MALFORMED,
     REASON_FIELD_MISSING,
     REASON_OCI_DIGEST_MALFORMED,
-    REASON_REKOR_INCLUSION_PROOF_MALFORMED,
     REASON_RELEASE_MANIFEST_MISMATCH,
     REASON_SELF_CHECK_UNKNOWN_STATUS,
     TRIPWIRE_IS_NOT_TRUST_ASSERTION,
@@ -195,59 +193,22 @@ if __name__ == "__main__":
 
 
 # ---------------------------------------------------------------------------
-# Extractor parity (drift guard)
+# The retired extractor
 #
-# _extract_verifier_identity_block is hand-duplicated into
-# plugins/verifier_identity_tripwire.py ("Mirror of the helper in
-# c18_verifier_identity.py; duplicated here to avoid an extra import cycle").
-# The copies had drifted: given a present-but-non-dict
-# evidence.verifier_identity, c18 short-circuited to None while the tripwire
-# fell through to the remaining lookups. BOTH callers read None as "legacy
-# pre-C18 bundle -> clean PASS", so the short-circuit skipped every C18
-# structural check on a malformed block — fail-open. c18 now falls through to
-# match the tripwire (strictly more checking, never less).
+# `_extract_verifier_identity_block` (a c18 copy and a hand-duplicated tripwire
+# mirror) was the fail-open pair: the copies drifted, and both callers read
+# None as "legacy bundle, clean PASS". The tri-state `_locate_verifier_identity`
+# replaced it in every caller, and `tests/c18/test_cli_verify_c18_tristate.py`
+# holds the three locator copies (extension, tripwire, CLI) in agreement. The
+# dead pair was deleted on 2026-09-05 (DUPLICATION_CENSUS §8); the test below
+# keeps the ORIGINAL intent — a malformed inner block never skips the
+# structural check — on the live path.
 # ---------------------------------------------------------------------------
 
 from types import SimpleNamespace  # noqa: E402
 
-from audit_bundle.extensions.c18_verifier_identity import (  # noqa: E402
-    _extract_verifier_identity_block as _c18_extract,
-)
-from audit_bundle.plugins.verifier_identity_tripwire import (  # noqa: E402
-    _extract_verifier_identity_block as _tripwire_extract,
-)
-
 _IDENT = {"verifier_oci_digest": "sha256:" + "a" * 64,
           "verifier_self_check_status": "passed"}
-
-_EXTRACTOR_CASES = {
-    "attr style, dict block":
-        SimpleNamespace(evidence=SimpleNamespace(verifier_identity=_IDENT)),
-    "attr style, NON-dict block + top-level block":
-        SimpleNamespace(evidence=SimpleNamespace(verifier_identity="not-a-dict"),
-                        verifier_identity=_IDENT),
-    "attr style, NON-dict block, no fallback":
-        SimpleNamespace(evidence=SimpleNamespace(verifier_identity=123)),
-    "attr style, None block + top-level block":
-        SimpleNamespace(evidence=SimpleNamespace(verifier_identity=None),
-                        verifier_identity=_IDENT),
-    "dict style":
-        {"evidence": {"verifier_identity": _IDENT}},
-    "dict style, non-dict block":
-        {"evidence": {"verifier_identity": "not-a-dict"}},
-    "no evidence at all":
-        SimpleNamespace(),
-}
-
-
-@pytest.mark.parametrize("label", sorted(_EXTRACTOR_CASES))
-def test_extractor_copies_agree(label):
-    """The two hand-maintained copies must resolve every manifest shape
-    identically; the next divergence fails here, not in a verdict."""
-    manifest = _EXTRACTOR_CASES[label]
-    assert _c18_extract(manifest) == _tripwire_extract(manifest), (
-        f"extractor copies disagree on {label!r}"
-    )
 
 
 def test_malformed_inner_block_does_not_skip_structural_checks():
@@ -258,7 +219,6 @@ def test_malformed_inner_block_does_not_skip_structural_checks():
         evidence=SimpleNamespace(verifier_identity="not-a-dict"),
         verifier_identity=_IDENT,
     )
-    assert _c18_extract(manifest) == _IDENT
 
     # And the structural check is no longer skipped. Before the original fix
     # this returned [] — an empty reason list is a clean PASS, i.e. the

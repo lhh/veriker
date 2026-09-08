@@ -13,6 +13,7 @@ TraceNotFound  — raised by load_trace when trace_id is absent
 from __future__ import annotations
 
 import json
+from audit_bundle.strict_json import strict_json_loads
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
@@ -27,15 +28,6 @@ from audit_bundle.retrieval.trace import (
 
 class TraceNotFound(KeyError):
     """Raised by load_trace when trace_id is not present in the JSONL log."""
-
-
-def _reject_nonfinite_token(token: str) -> float:
-    """parse_constant hook: stdlib json ACCEPTS the non-standard NaN /
-    Infinity / -Infinity tokens by default, which would let a hand-edited or
-    foreign-producer log line launder a non-finite float past the
-    construction-time guard. The log is bundle-supplied data; a line carrying
-    one of these tokens is not RFC 8259 JSON and is rejected as such."""
-    raise ValueError(f"non-finite JSON token {token!r} is not RFC 8259 JSON")
 
 
 def capture_trace(
@@ -207,7 +199,7 @@ def load_trace(jsonl_path: Path, trace_id: str) -> RetrievalTrace:
                     f"{jsonl_path} line {lineno} is inadmissible: {breach.detail}"
                 )
             try:
-                record = json.loads(line, parse_constant=_reject_nonfinite_token)
+                record = strict_json_loads(line)
             except ValueError as exc:
                 raise RetrievalTraceError(
                     f"{jsonl_path} line {lineno} is not valid JSON: {exc}"

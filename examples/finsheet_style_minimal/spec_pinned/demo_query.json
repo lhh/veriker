@@ -1,0 +1,36 @@
+{
+  "column": "nav",
+  "filters": [
+    {
+      "column": "__group__",
+      "op": "eq",
+      "value": "Fund I"
+    }
+  ],
+  "layout": {
+    "columns": {
+      "company": "Company",
+      "date": "Investment Date",
+      "geo": "Geography",
+      "invested": "Invested Capital ($m)",
+      "moic": "MOIC (x)",
+      "nav": "Unrealized Value ($m)",
+      "own": "Ownership (%)",
+      "realized": "Realized Value ($m)",
+      "sector": "Sector",
+      "status": "Status",
+      "total": "Total Value ($m)"
+    },
+    "exclude_first_cell": "^(Total|Subtotal|Units)$",
+    "group_from": "divider:^Fund\\s+[IVX]+$",
+    "header_match": [
+      "Company",
+      "MOIC (x)"
+    ],
+    "key_column": "company",
+    "sheet": "Holdings"
+  },
+  "op": "sum",
+  "round": 2,
+  "schema": "sheet-query-v1"
+}

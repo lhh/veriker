@@ -40,6 +40,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from audit_bundle.extensions import c18_verifier_identity as C18  # noqa: E402
 from audit_bundle.plugins import verifier_identity_tripwire as TRIP  # noqa: E402
+from veriker.cli.verify import _c18_locate_verifier_identity as CLI_LOCATE  # noqa: E402
 
 FOUND, ABSENT, MALFORMED = "FOUND", "ABSENT", "MALFORMED"
 
@@ -65,26 +66,40 @@ _CASES = {
         FOUND,
     ),
     "top-level fallback dict block": (
-        SimpleNamespace(evidence=SimpleNamespace(verifier_identity=None),
-                        verifier_identity=_GOOD),
+        SimpleNamespace(
+            evidence=SimpleNamespace(verifier_identity=None), verifier_identity=_GOOD
+        ),
         FOUND,
     ),
     # --- present but unparseable: the hole ---
-    "dict style, block is a str": (
-        {"evidence": {"verifier_identity": "x"}}, MALFORMED),
-    "dict style, block is an int": (
-        {"evidence": {"verifier_identity": 0}}, MALFORMED),
-    "dict style, block is a list": (
-        {"evidence": {"verifier_identity": []}}, MALFORMED),
+    "dict style, block is a str": ({"evidence": {"verifier_identity": "x"}}, MALFORMED),
+    "dict style, block is an int": ({"evidence": {"verifier_identity": 0}}, MALFORMED),
+    "dict style, block is a list": ({"evidence": {"verifier_identity": []}}, MALFORMED),
     "dict style, block is a bool": (
-        {"evidence": {"verifier_identity": False}}, MALFORMED),
+        {"evidence": {"verifier_identity": False}},
+        MALFORMED,
+    ),
     "attr style, block is a str, no fallback": (
-        SimpleNamespace(evidence=SimpleNamespace(verifier_identity="x")), MALFORMED),
+        SimpleNamespace(evidence=SimpleNamespace(verifier_identity="x")),
+        MALFORMED,
+    ),
     "top-level verifier_identity is a str": (
-        SimpleNamespace(verifier_identity="x"), MALFORMED),
+        SimpleNamespace(verifier_identity="x"),
+        MALFORMED,
+    ),
     # --- the same degradation ONE LEVEL UP: evidence itself unparseable ---
     "evidence is a str": ({"evidence": "x"}, MALFORMED),
     "evidence is a list": ({"evidence": []}, MALFORMED),
+    # --- top-level key on a RAW DICT: not the declared field; ABSENT in all three
+    # copies (the attribute-style fallback is for dataclasses only). Pinned so the
+    # CLI copy cannot grow a dict fallback the extension lacks — a first draft did,
+    # and this guard caught it. ---
+    "dict top-level verifier_identity block": ({"verifier_identity": _GOOD}, ABSENT),
+    "dict top-level verifier_identity is a string": (
+        {"verifier_identity": "x"},
+        ABSENT,
+    ),
+    "dict top-level verifier_identity is None": ({"verifier_identity": None}, ABSENT),
 }
 
 
@@ -100,14 +115,20 @@ def test_locator_is_tri_state(label):
 
 
 @pytest.mark.parametrize("label", sorted(_CASES))
-def test_the_two_hand_maintained_copies_agree(label):
+def test_the_hand_maintained_copies_agree(label):
     """Drift guard, extended to the tri-state. The copies are duplicated rather
     than imported ('to avoid an extra import cycle'), and nothing else holds
-    them in agreement — which is exactly how they drifted last time."""
+    them in agreement — which is exactly how they drifted last time. THREE copies
+    since 2026-09-02: the stdlib CLI's `_c18_locate_verifier_identity` joins for
+    every dict-shaped manifest (it never sees a dataclass)."""
     manifest, _ = _CASES[label]
     assert C18._locate_verifier_identity(manifest) == TRIP._locate_verifier_identity(
         manifest
     ), f"extractor copies disagree on {label!r}"
+    if isinstance(manifest, dict):
+        assert CLI_LOCATE(manifest) == C18._locate_verifier_identity(manifest), (
+            f"CLI copy disagrees with the extension on {label!r}"
+        )
 
 
 def _structural(manifest):
@@ -150,7 +171,9 @@ def test_the_gradient_is_inverted():
     incomplete = _structural({"evidence": {"verifier_identity": {}}})
     malformed = _structural({"evidence": {"verifier_identity": "x"}})
     assert incomplete, "an incomplete block must still fail (control)"
-    assert malformed, "a MALFORMED block must fail at least as hard as an incomplete one"
+    assert malformed, (
+        "a MALFORMED block must fail at least as hard as an incomplete one"
+    )
 
 
 def test_tripwire_plugin_refuses_a_malformed_block():

@@ -22,12 +22,15 @@ from audit_bundle.extensions.c18_tuf_bootstrap import (
     load_bundled_root_bootstrap_unverified,
 )
 from audit_bundle.extensions.c18_tuf_client import (
+    TUFClientError,
     ROLE_PLUGIN_ALLOWLIST,
     ROLE_SIGSTORE_TRUST_ROOT,
     TUFBootstrapPlaceholderPresent,
     fetch_plugin_allowlist,
     fetch_sigstore_trust_root,
     load_bundled_root,
+    validate_plugin_allowlist_document,
+    validate_sigstore_trust_root_document,
 )
 
 
@@ -44,9 +47,31 @@ def test_load_bundled_root_opt_in_returns_unsigned_bootstrap_root() -> None:
 
 
 def test_fetch_sigstore_trust_root_fails_closed_on_tbd_placeholder() -> None:
-    """The shipped sigstore-trust-root carries TBD-* expected_sha256 values."""
+    """The shipped sigstore-trust-root carries TBD-* expected_sha256 values. The
+    strict VALIDATOR (which the TUF-fetch path runs on the verified bytes)
+    refuses it; the strict fetcher itself never reads the bundled file at all."""
+    role = fetch_sigstore_trust_root_bootstrap_unverified()
     with pytest.raises(TUFBootstrapPlaceholderPresent, match="TBD"):
-        fetch_sigstore_trust_root()
+        validate_sigstore_trust_root_document(role, source="bundled")
+
+
+def test_strict_fetchers_do_not_read_the_bundled_file(tmp_path, monkeypatch) -> None:
+    """No feed reachable, no trust dir: the strict fetchers fail closed on the
+    trust-dir guard BEFORE any network or file read. The bundled paths are pointed
+    at files that do not exist, so a fetcher that fell back to them would raise a
+    different error (missing file), and the exact-message match discriminates."""
+    from audit_bundle.extensions import c18_tuf_client as tc
+
+    for attr in (
+        "_BUNDLED_SIGSTORE_TRUST_ROOT_PATH",
+        "_BUNDLED_PLUGIN_ALLOWLIST_PATH",
+        "_BUNDLED_REVOCATION_ROOT_PATH",
+        "_EMBEDDED_ROOT_PATH",
+    ):
+        monkeypatch.setattr(tc, attr, tmp_path / f"{attr}.does-not-exist.json")
+    for fetcher in (fetch_sigstore_trust_root, fetch_plugin_allowlist):
+        with pytest.raises(TUFClientError, match="PERSISTENT trust_dir"):
+            fetcher(feed_url="http://127.0.0.1:9/never")
 
 
 def test_fetch_sigstore_trust_root_opt_in_returns_role() -> None:
@@ -56,8 +81,9 @@ def test_fetch_sigstore_trust_root_opt_in_returns_role() -> None:
 
 def test_fetch_plugin_allowlist_fails_closed_on_tbd_digest() -> None:
     """The shipped plugin-allowlist carries TBD-* oci_digest placeholders."""
+    role = fetch_plugin_allowlist_bootstrap_unverified()
     with pytest.raises(TUFBootstrapPlaceholderPresent, match="TBD"):
-        fetch_plugin_allowlist()
+        validate_plugin_allowlist_document(role, source="bundled")
 
 
 def test_fetch_plugin_allowlist_opt_in_returns_role() -> None:
@@ -68,8 +94,6 @@ def test_fetch_plugin_allowlist_opt_in_returns_role() -> None:
 def test_placeholder_token_in_prose_does_not_false_trip(tmp_path) -> None:
     """A TBD token in a KEY name or mid-sentence prose VALUE must not trip the
     gate — only a VALUE that BEGINS with the sentinel is an unfilled field."""
-    import json
-
     role = {
         "role_name": ROLE_PLUGIN_ALLOWLIST,
         "registry_org_allowlist": ["ghcr.io/veriker/"],
@@ -83,11 +107,18 @@ def test_placeholder_token_in_prose_does_not_false_trip(tmp_path) -> None:
             }
         },
     }
-    path = tmp_path / "plugin_allowlist.json"
-    path.write_text(json.dumps(role), encoding="utf-8")
-    # Mid-sentence "TBD" in honest_note is NOT at value-start → must load fine.
-    loaded = fetch_plugin_allowlist(bundled_path=path)
+    # Mid-sentence "TBD" in honest_note is NOT at value-start → must validate fine.
+    loaded = validate_plugin_allowlist_document(role, source="inline")
     assert loaded["role_name"] == ROLE_PLUGIN_ALLOWLIST
+
+
+def test_a_local_path_is_no_longer_an_input_to_a_strict_fetcher(tmp_path) -> None:
+    """The bypass: `fetch_plugin_allowlist(bundled_path=<anything>)` used to return
+    whatever was at the path, no signature, no regex needed. Gone."""
+    path = tmp_path / "plugin_allowlist.json"
+    path.write_text("{}", encoding="utf-8")
+    with pytest.raises(TypeError):
+        fetch_plugin_allowlist(bundled_path=path)  # type: ignore[call-arg]
 
 
 if __name__ == "__main__":

@@ -1,43 +1,116 @@
 {
-  "_status": "BOOTSTRAP — NOT PRODUCTION-SIGNED. The expected_sha256_at_v0_3_cut placeholder values below are filled at the v0.3.0-rc1 release ceremony from Sigstore's upstream Fulcio/CTFE/Rekor keys; see _tuf_root/README.md. The C18 marker gate (tests/test_synthetic_c18_marker_gate.py) fails closed on these placeholders under REQUIRE_C18_HARDENING=1 until the ceremony runs.",
+  "_status": "BOOTSTRAP \u2014 NOT PRODUCTION-SIGNED. The expected_sha256_at_v0_3_cut placeholder values below are filled at the v0.3.0-rc1 release ceremony from Sigstore's upstream Fulcio/CTFE/Rekor keys; see _tuf_root/README.md. The C18 marker gate (tests/test_synthetic_c18_marker_gate.py) fails closed on these placeholders under REQUIRE_C18_HARDENING=1 until the ceremony runs. Since 2026-09-02 the document is a SIGNED 2-of-3 role document (signed.keys / signed.roles / signatures, the revocation-root shape): the three approver publics below are placeholders and the signatures are empty until the ceremony.",
   "schema": "v-kernel-audit-bundle/sigstore-trust-root/v0.3",
   "spec_version": "1.0.31",
   "role_name": "sigstore-trust-root",
   "role_separation_note": "This file is a SEPARATE TUF role from the C18 release role per OQ-2 disposition. Distinct rotation cadence: NEXI re-pins on Sigstore key-rotation announcements; not coupled to C18 release cadence. Matches Sigstore's BYO-TUF convention (https://blog.sigstore.dev/sigstore-bring-your-own-stuf-with-tuf-40febfd2badd/).",
   "comment_bootstrap_disposition": "v0.3 bootstrap: the actual PEM bytes for Fulcio + CTFE + Rekor public keys live in Sigstore's upstream TUF root at https://tuf-repo-cdn.sigstore.dev/. NEXI's `sigstore-trust-root` TUF role mirrors those targets under the consumer-side trust dir; consumers fetch the PEM bytes by TUF protocol with consistent-snapshot + monotonic-version + expiry checks. The expected sha256 digests below are the CURRENT (2026-05-20) Sigstore production-good values; rotation triggers a re-pin via the ceremony procedure in `_tuf_root/README.md`.",
-  "targets": {
-    "fulcio.pub": {
-      "purpose": "Sigstore Fulcio root CA — issues short-lived X.509 certs for keyless signing; binds OIDC identity claims to ephemeral signing keys",
-      "upstream_url": "https://tuf-repo-cdn.sigstore.dev/targets/fulcio_v1.crt.pem",
-      "expected_sha256_at_v0_3_cut": "TBD-AT-CEREMONY-REPLACE-WITH-SIGSTORE-UPSTREAM",
-      "type": "x509-certificate-pem",
-      "spec_reference": "https://github.com/sigstore/fulcio/blob/main/CONFIG.md"
+  "_keyid_rule": "keyid = hex(sha256(keyval.public raw32)) for every role keyid; strict validation refuses a keyid that is not the hash of its own key.",
+  "signatures": [
+    {
+      "keyid": "a671850b441539f3e9b997b18ced3095f18f1e69b7faf8178c1f8b68670418e5",
+      "sig": ""
     },
-    "ctfe.pub": {
-      "purpose": "Sigstore CTFE (Certificate Transparency Front-End) log signing key — Sigstore signs every Fulcio cert into the public CT log; this key verifies CT inclusion",
-      "upstream_url": "https://tuf-repo-cdn.sigstore.dev/targets/ctfe.pub",
-      "expected_sha256_at_v0_3_cut": "TBD-AT-CEREMONY-REPLACE-WITH-SIGSTORE-UPSTREAM",
-      "type": "ecdsa-public-key-pem",
-      "spec_reference": "https://github.com/sigstore/fulcio/blob/main/docs/ctlog.md"
+    {
+      "keyid": "1572e9c264707048378950246ab89f42545de5e16997720e117d71ade226263c",
+      "sig": ""
     },
-    "rekor.pub": {
-      "purpose": "Sigstore Rekor transparency-log signing key — Rekor's signed tree heads are verified against this key; STH gossip (c18-019) uses this",
-      "upstream_url": "https://tuf-repo-cdn.sigstore.dev/targets/rekor.pub",
-      "expected_sha256_at_v0_3_cut": "TBD-AT-CEREMONY-REPLACE-WITH-SIGSTORE-UPSTREAM",
-      "type": "ecdsa-public-key-pem",
-      "spec_reference": "https://github.com/sigstore/rekor/blob/main/types/README.md"
-    },
-    "sigstore_root_threshold.json": {
-      "purpose": "Rotation-ceremony policy doc for the sigstore-trust-root role itself",
-      "upstream_url": "(NEXI-internal — see release/tuf_root_bootstrap.py + _tuf_root/README.md)",
-      "expected_sha256_at_v0_3_cut": "TBD-AT-CEREMONY-COMPUTED-FROM-ROTATION-POLICY-FILE",
-      "type": "json-policy-doc",
-      "rotation_policy": {
-        "minimum_distinct_human_approvers": 2,
-        "minimum_total_approvers": 3,
-        "comment": "Per Pass-1 tightening item 14 sub-bullet 7: ≥2-of-3 distinct human approvers per rotation ceremony. NEXI's one-person-CSO + AI-workforce posture means hardware-rooted MULTI-SITE token holdings (maintainer-laptop + cloud KMS + cold-storage) satisfy the 'distinct' requirement structurally; humans-only interpretation of distinct is honestly deferred to v1.5+ per OQ-7 alongside SLSA L4."
-      }
+    {
+      "keyid": "4639a94b2113328cd390cf41999ab7a08b82672b02338a1426ae657fa4bae1ae",
+      "sig": ""
     }
+  ],
+  "signed": {
+    "_type": "sigstore-trust-root",
+    "consistent_snapshot": true,
+    "expires": "2026-08-18T00:00:00Z",
+    "keys": {
+      "a671850b441539f3e9b997b18ced3095f18f1e69b7faf8178c1f8b68670418e5": {
+        "keyid_hash_algorithms": [
+          "sha256",
+          "sha512"
+        ],
+        "keytype": "ed25519",
+        "keyval": {
+          "public": "44cdb8cc618fa7f8b9cea3eca861d406f2e83519299118ec3b79aea63f42649f"
+        },
+        "scheme": "ed25519"
+      },
+      "1572e9c264707048378950246ab89f42545de5e16997720e117d71ade226263c": {
+        "keyid_hash_algorithms": [
+          "sha256",
+          "sha512"
+        ],
+        "keytype": "ed25519",
+        "keyval": {
+          "public": "5b126719a67a7b61d04a4dac8c428174ef0252c0636d5d06c932c6a481dbb6e2"
+        },
+        "scheme": "ed25519"
+      },
+      "4639a94b2113328cd390cf41999ab7a08b82672b02338a1426ae657fa4bae1ae": {
+        "keyid_hash_algorithms": [
+          "sha256",
+          "sha512"
+        ],
+        "keytype": "ed25519",
+        "keyval": {
+          "public": "784f450d491401bdedcfc078c727318f95cf81b57af0558985914df850d2f55c"
+        },
+        "scheme": "ed25519"
+      }
+    },
+    "roles": {
+      "sigstore-trust-root": {
+        "keyids": [
+          "a671850b441539f3e9b997b18ced3095f18f1e69b7faf8178c1f8b68670418e5",
+          "1572e9c264707048378950246ab89f42545de5e16997720e117d71ade226263c",
+          "4639a94b2113328cd390cf41999ab7a08b82672b02338a1426ae657fa4bae1ae"
+        ],
+        "threshold": 2
+      }
+    },
+    "spec_version": "1.0.31",
+    "targets": {
+      "fulcio.pub": {
+        "purpose": "Sigstore Fulcio root CA \u2014 issues short-lived X.509 certs for keyless signing; binds OIDC identity claims to ephemeral signing keys",
+        "upstream_url": "https://tuf-repo-cdn.sigstore.dev/targets/fulcio_v1.crt.pem",
+        "expected_sha256_at_v0_3_cut": "TBD-AT-CEREMONY-REPLACE-WITH-SIGSTORE-UPSTREAM",
+        "type": "x509-certificate-pem",
+        "spec_reference": "https://github.com/sigstore/fulcio/blob/main/CONFIG.md"
+      },
+      "ctfe.pub": {
+        "purpose": "Sigstore CTFE (Certificate Transparency Front-End) log signing key \u2014 Sigstore signs every Fulcio cert into the public CT log; this key verifies CT inclusion",
+        "upstream_url": "https://tuf-repo-cdn.sigstore.dev/targets/ctfe.pub",
+        "expected_sha256_at_v0_3_cut": "TBD-AT-CEREMONY-REPLACE-WITH-SIGSTORE-UPSTREAM",
+        "type": "ecdsa-public-key-pem",
+        "spec_reference": "https://github.com/sigstore/fulcio/blob/main/docs/ctlog.md"
+      },
+      "rekor.pub": {
+        "purpose": "Sigstore Rekor transparency-log signing key \u2014 Rekor's signed tree heads are verified against this key; STH gossip (c18-019) uses this",
+        "upstream_url": "https://tuf-repo-cdn.sigstore.dev/targets/rekor.pub",
+        "expected_sha256_at_v0_3_cut": "TBD-AT-CEREMONY-REPLACE-WITH-SIGSTORE-UPSTREAM",
+        "type": "ecdsa-public-key-pem",
+        "spec_reference": "https://github.com/sigstore/rekor/blob/main/types/README.md"
+      },
+      "sigstore_root_threshold.json": {
+        "purpose": "Rotation-ceremony policy doc for the sigstore-trust-root role itself",
+        "upstream_url": "(NEXI-internal \u2014 see release/tuf_root_bootstrap.py + _tuf_root/README.md)",
+        "expected_sha256_at_v0_3_cut": "TBD-AT-CEREMONY-COMPUTED-FROM-ROTATION-POLICY-FILE",
+        "type": "json-policy-doc",
+        "rotation_policy": {
+          "minimum_distinct_human_approvers": 2,
+          "minimum_total_approvers": 3,
+          "comment": "Per Pass-1 tightening item 14 sub-bullet 7: \u22652-of-3 distinct human approvers per rotation ceremony. NEXI's one-person-CSO + AI-workforce posture means hardware-rooted MULTI-SITE token holdings (maintainer-laptop + cloud KMS + cold-storage) satisfy the 'distinct' requirement structurally; humans-only interpretation of distinct is honestly deferred to v1.5+ per OQ-7 alongside SLSA L4."
+        }
+      }
+    },
+    "version": 1
   },
-  "honest_hedge": "v0.3 ships the sigstore-trust-root role STRUCTURE — the separate role file, the target enumeration shape, the rotation-policy doc reference, the python-tuf integration in c18_tuf_client.py. The actual PEM bytes are pulled from Sigstore upstream at first-trust ceremony AND embedded into the OCI image via the c18-001 flake at release-tag-cut. Production sha256 digests above are filled by the ceremony tooling. Rotation discipline matches Sigstore's BYO-TUF convention."
+  "rotation_policy": {
+    "minimum_distinct_human_approvers": 2,
+    "minimum_total_approvers": 3,
+    "max_validity_days": 90,
+    "comment": "2-of-3 distinct approvers per rotation ceremony; root metadata expiry MUST be <= 90 days. Mirrors the C18 release-root rotation discipline (Pass-1 tightening item 14 sub-bullet 7). Hardware-rooted multi-site token holdings satisfy 'distinct' structurally at v0.3; humans-only interpretation deferred to v1.5+ per OQ-7."
+  },
+  "honest_hedge": "v0.3 ships the sigstore-trust-root role STRUCTURE \u2014 the separate role file, the target enumeration shape, the rotation-policy doc reference, the python-tuf integration in c18_tuf_client.py. The actual PEM bytes are pulled from Sigstore upstream at first-trust ceremony AND embedded into the OCI image via the c18-001 flake at release-tag-cut. Production sha256 digests above are filled by the ceremony tooling. Rotation discipline matches Sigstore's BYO-TUF convention."
 }

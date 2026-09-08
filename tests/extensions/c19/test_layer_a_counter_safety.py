@@ -15,6 +15,10 @@ from __future__ import annotations
 
 import pytest
 
+# Optional-dependency slice: SKIP cleanly when cbor2 is absent
+# (installed by `veriker[c19]`) rather than failing collection.
+pytest.importorskip("cbor2")
+
 from audit_bundle.extensions.c19.layer_a_counter import (
     LayerAVerificationError,
     validate_event_cddl,

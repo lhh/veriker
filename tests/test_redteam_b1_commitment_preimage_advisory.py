@@ -9,6 +9,13 @@ removal. This locks the advisory's behavior.
 
 from __future__ import annotations
 
+import pytest
+
+# Optional-dependency slice: SKIP cleanly when cbor2 is absent
+# (installed by `veriker[c19]`) rather than failing collection. This must
+# precede the imports below, which reach it directly or transitively.
+pytest.importorskip("cbor2")
+
 from audit_bundle.extensions.c19.layer_a_counter import deterministic_cbor_encode
 from audit_bundle.snapshots.cid import (
     LOW_ENTROPY_PREIMAGE_THRESHOLD_BYTES,

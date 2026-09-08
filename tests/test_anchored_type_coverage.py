@@ -176,9 +176,9 @@ def test_the_tamper_alone_is_caught(clean_bundle: Path, tmp_path) -> None:
     _offset_every_corner(bundle, 15.0)
 
     result = _run_verify(bundle)
-    assert result.returncode == FAIL, result.stderr
-    assert "corner_load_vertical_residual" in result.stderr
-    assert "RE_DERIVATION_MISMATCH" in result.stderr
+    assert result.returncode == FAIL, result.stdout + result.stderr
+    assert "corner_load_vertical_residual" in (result.stdout + result.stderr)
+    assert "RE_DERIVATION_MISMATCH" in (result.stdout + result.stderr)
 
 
 def test_retyping_an_output_onto_a_sibling_rule_cannot_pass(
@@ -208,8 +208,8 @@ def test_retyping_an_output_onto_a_sibling_rule_cannot_pass(
     # And through the pilot's shipped entry point, which ALSO pins output_id ->
     # type: the same edit is refused earlier, as a REJECT.
     result = _run_verify(bundle)
-    assert result.returncode == FAIL, result.stderr
-    assert "ROLE_POLICY_VIOLATION" in result.stderr
+    assert result.returncode == FAIL, result.stdout + result.stderr
+    assert "ROLE_POLICY_VIOLATION" in (result.stdout + result.stderr)
 
 
 def test_the_remainder_is_could_not_conclude_not_a_reject(
@@ -267,7 +267,7 @@ def test_the_refusal_names_the_type_that_was_skipped(
 def test_the_honest_bundle_still_passes(clean_bundle: Path) -> None:
     """A guard that also reddens honest bundles is worse than the hole."""
     result = _run_verify(clean_bundle)
-    assert result.returncode == PASS, result.stderr
+    assert result.returncode == PASS, result.stdout + result.stderr
 
 
 def test_an_honest_violation_still_reads_as_a_reject(
@@ -284,8 +284,8 @@ def test_an_honest_violation_still_reads_as_a_reject(
     _offset_every_corner(bundle, 15.0)
 
     result = _run_verify(bundle)
-    assert result.returncode == FAIL, result.stderr
-    assert "anchored_spec_types" not in result.stderr
+    assert result.returncode == FAIL, result.stdout + result.stderr
+    assert "anchored_spec_types" not in (result.stdout + result.stderr)
 
 
 # --------------------------------------------------------------------------
@@ -466,8 +466,14 @@ def _corner_work_set():
             "corner_load_vertical_residual": "corner_load_vertical_residual",
             "corner_load_pitch_residual": "corner_load_pitch_residual",
             "corner_load_roll_residual": "corner_load_roll_residual",
+            # Channel 4, added 2026-09-03: the front/rear transfer split. Named
+            # here because a work-set must cover the anchored spec's type keys
+            # COMPLETELY -- a type the spec defines and the set omits is a
+            # delivered-but-not-named violation, which is what this cell
+            # reported when the channel landed.
+            "corner_load_transfer_split_residual": "corner_load_transfer_split_residual",
         },
-        source="test: the three corner_load residual channels",
+        source="test: the corner_load channels -- three residuals plus the transfer split",
         provenance="SELF_AUTHORED",
     )
 
@@ -546,10 +552,10 @@ def test_the_work_set_closes_what_the_decoy_reopened(
     )
 
     result = _run_verify(bundle)
-    assert result.returncode == FAIL, result.stderr
-    assert "ROLE_POLICY_VIOLATION" in result.stderr
-    assert "WORK_SET_VIOLATION" in result.stderr
-    assert "corner_load_vertical_residual" in result.stderr
+    assert result.returncode == FAIL, result.stdout + result.stderr
+    assert "ROLE_POLICY_VIOLATION" in (result.stdout + result.stderr)
+    assert "WORK_SET_VIOLATION" in (result.stdout + result.stderr)
+    assert "corner_load_vertical_residual" in (result.stdout + result.stderr)
 
 
 def test_dropping_a_pinned_claim_is_a_work_set_reject(
@@ -577,9 +583,9 @@ def test_dropping_a_pinned_claim_is_a_work_set_reject(
     )
 
     result = _run_verify(bundle)
-    assert result.returncode == FAIL, result.stderr
-    assert "WORK_SET_VIOLATION" in result.stderr
-    assert "corner_load_vertical_residual" in result.stderr
+    assert result.returncode == FAIL, result.stdout + result.stderr
+    assert "WORK_SET_VIOLATION" in (result.stdout + result.stderr)
+    assert "corner_load_vertical_residual" in (result.stdout + result.stderr)
 
 
 def test_the_fallback_alone_sees_the_dropped_claim_only_as_an_unexercised_rule(

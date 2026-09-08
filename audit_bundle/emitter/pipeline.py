@@ -45,6 +45,8 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
+from audit_bundle.digest import sha256_bytes
+from audit_bundle._containment import ContainmentError, contain
 
 if TYPE_CHECKING:
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -73,8 +75,9 @@ class BundleSelfCheckFailed(Exception):
 
 
 def sha256(data: bytes) -> str:
-    """The universal digest helper every builder defines as `_sha256`."""
-    return hashlib.sha256(data).hexdigest()
+    """The universal digest helper every builder defines as `_sha256` — now a
+    name for ``audit_bundle.digest.sha256_bytes`` (the one definition)."""
+    return sha256_bytes(data)
 
 
 @dataclass
@@ -127,8 +130,8 @@ def _write_file(out_dir: Path, rel_path: str, data: bytes) -> str:
     """
     target = out_dir / rel_path
     try:
-        target.resolve().relative_to(out_dir.resolve())
-    except ValueError:
+        contain(out_dir, rel_path, require_regular=False)
+    except ContainmentError:
         raise UnsafeBundleRelPath(
             f"bundle rel_path {rel_path!r} resolves outside the bundle root "
             f"{out_dir} — refusing the write (path containment)"

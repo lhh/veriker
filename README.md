@@ -25,7 +25,7 @@ many small checks instead of one opaque pass/fail.
 ```console
 $ python examples/citation_integrity_minimal/build_bundle.py --out-dir /tmp/citation_bundle
 $ veriker --bundle-dir /tmp/citation_bundle
-veriker 0.2.0 (experimental)
+veriker 0.2.1 (experimental)
 PASS  file_integrity
 PASS  spec_sha_pinning
 PASS  cross_refs
@@ -46,7 +46,7 @@ $ echo $?
 $ echo ' (tampered)' >> /tmp/citation_bundle/snapshots/src-welfare-001.txt   # one byte moves
 
 $ veriker --bundle-dir /tmp/citation_bundle
-veriker 0.2.0 (experimental)
+veriker 0.2.1 (experimental)
 FAIL  file_integrity                    [bad_file_sha] 'snapshots/src-welfare-001.txt':
       manifest_sha='89b92b23…' computed_sha='48fa2a73…'
 …
@@ -142,9 +142,37 @@ Install the verifier from PyPI:
 pip install veriker          # the offline bundle verifier — Python ≥ 3.11
 ```
 
-That gives you the `veriker` command (`veriker --bundle-dir <dir>`, equivalently
-`python -m veriker`). To build and run the example pilots below, or to develop,
-clone the repo and install from source instead:
+That installs **veriker and nothing else** — no transitive dependencies at all,
+which is the packaging that makes the "stdlib-only" badge above checkable rather
+than merely stated. You get the `veriker` command (`veriker --bundle-dir <dir>`,
+equivalently `python -m veriker`), and most of the pilots below run on that
+install alone (measured 2026-09-03: 45 of the 51 that ship both a builder and a
+`verify.py`; the rest need an extra, an SMT solver, or `torch`, and say so when
+you run them).
+
+Four optional extras cover the paths that genuinely need third-party code. None
+is required to verify a bundle:
+
+| Extra | Pulls | For |
+|---|---|---|
+| `veriker[crypto]` | `cryptography`, `rfc8785` | Ed25519 verdict signatures (`examples/caselaw_citation_gate`), and the DSSE / Fulcio / revocation consumption paths |
+| `veriker[c19]` | the above + `py_ecc`, `cbor2` | the C19 cross-host / trusted-time layer |
+| `veriker[hostverify]` | `tuf` | `host_digest_verify`, the network-connected host-digest path |
+| `veriker[all]` | all of the above | if you would rather not choose |
+
+> **What the extras do not imply.** No pilot in this repo ships a DSSE envelope
+> or a Rekor transparency-log anchor, and none imports `audit_bundle.dsse`,
+> `rekor_anchor`, `fulcio_identity` or `c18_tuf_client`. Those modules are
+> implemented and unit-tested, but nothing in the shipped example set exercises
+> them end to end — so please do not read the presence of `tuf` or `cryptography`
+> in an extra as evidence that transparency-log-backed attestation is proven
+> here. The `veriker` command does import from `audit_bundle.dsse`, but only its
+> stdlib-only part (`pae` and `version_map`); the envelope, payload, set-closure
+> and revocation modules, which carry `cryptography` and `rfc8785`, are imported
+> lazily and are not reached from the CLI.
+
+To build and run the example pilots below, or to develop, clone the repo and
+install from source instead:
 
 ```bash
 python -m venv .venv && . .venv/bin/activate

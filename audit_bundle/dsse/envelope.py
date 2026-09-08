@@ -64,6 +64,7 @@ from audit_bundle.dsse.header import (
     DSSE_PAYLOADTYPE_MISMATCH,
     DSSEHeaderError,
     parse_strict_envelope,
+    require_payload_type_param,
 )
 from audit_bundle.dsse.pae import (
     b64url_nopad_decode,
@@ -223,7 +224,12 @@ def verify_envelope(
         allowlist).  The allowlist is never bundle-resident; it is injected
         by the caller.
     payload_type:
-        The payloadType URI to pin.  Defaults to the v0.4 pinned URI.
+        The payloadType URI to pin.  Defaults to the v0.4 pinned URI.  The
+        envelope must carry exactly this value (NFC, bytewise) and the PAE
+        preimage is built over it, so a signature made under another type
+        never verifies.  A non-str, empty, or non-UTF-8-encodable value is a
+        caller bug and raises ``ValueError`` before any producer byte is read
+        (the never-raise contract covers producer bytes only).
 
     Returns
     -------
@@ -240,13 +246,16 @@ def verify_envelope(
     DSSE_UNKNOWN_KID          — kid not found in allowlist
     DSSE_SIGNATURE_INVALID    — Ed25519 verification failure or 0 sigs
     """
-    pt = payload_type_nfc(payload_type)
+    pt = require_payload_type_param(payload_type)
 
     # ------------------------------------------------------------------
-    # Step 1: Strict header parse.
+    # Step 1: Strict header parse, pinned to THIS call's payload_type. The
+    # header check and the PAE preimage (step 6) must use one value; until
+    # 2026-09-06 the parser compared against its own constant and this
+    # parameter was dead for every value but the pin.
     # ------------------------------------------------------------------
     try:
-        envelope = parse_strict_envelope(raw_sidecar_bytes)
+        envelope = parse_strict_envelope(raw_sidecar_bytes, payload_type=pt)
     except DSSEHeaderError as exc:
         return VerifyEnvelopeResult(
             ok=False,

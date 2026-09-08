@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+from .strict_json import strict_json_loads
+from .digest import sha256_bytes as _sha256_bytes
 import os
 import subprocess
 from dataclasses import dataclass, fields, replace
@@ -220,10 +222,6 @@ VerifyResult = Verdict
 # ---------------------------------------------------------------------------
 
 
-def _sha256_bytes(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
-
-
 def _discover_repo_root(start: Path) -> Path | None:
     """Walk up from start looking for a .git entry (directory or file)."""
     for candidate in [start.resolve(), *start.resolve().parents]:
@@ -293,9 +291,12 @@ def _parse_manifest(raw_bytes: bytes, bundle_dir: Path) -> BundleManifest:
     post-gate swap, later steps would consume bytes the gate never bound.
     """
     try:
-        raw: Any = json.loads(raw_bytes)
+        raw: Any = strict_json_loads(raw_bytes)
     except (json.JSONDecodeError, ValueError, UnicodeDecodeError) as exc:
-        raise MalformedManifest(f"manifest.json is not valid JSON: {exc}") from exc
+        # StrictJSONError is a ValueError: a manifest with a duplicate key, a
+        # NaN token, or an oversized integer is malformed HERE, not parsed
+        # last-wins and certified (audit_bundle.strict_json).
+        raise MalformedManifest(f"manifest.json is not strict JSON: {exc}") from exc
     _validate_manifest_shape(raw)
 
     # §C9.1 v0.4 (sc9_1-003): populate `append_only_files` from raw JSON.
@@ -847,8 +848,8 @@ class BundleVerifier:
             # (cross-pillar, EXCLUDED from the open drop per
             # OSS_RELEASE_BOUNDARY.md), so the two gates cannot drift.
             try:
-                manifest_dict = json.loads(raw_manifest_bytes or b"")
-            except (json.JSONDecodeError, UnicodeDecodeError):
+                manifest_dict = strict_json_loads(raw_manifest_bytes or b"")
+            except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
                 # Unreachable in practice (_parse_manifest accepted these
                 # bytes above); kept narrow so a verifier bug crashes instead
                 # of silently skipping the checks.
@@ -1182,11 +1183,15 @@ class BundleVerifier:
             # membership test).
             manifest_schema: str = "unknown"
             try:
-                manifest_raw: dict = json.loads(
+                manifest_raw: dict = strict_json_loads(
                     (raw_manifest_bytes or b"").decode("utf-8", errors="replace")
                 )
                 manifest_schema = manifest_raw.get("schema_version", "unknown")
-            except (json.JSONDecodeError, AttributeError):
+            except (json.JSONDecodeError, ValueError, AttributeError):
+                # ValueError covers a strict-parse refusal (duplicate key /
+                # NaN / oversized int): fall through the same way, so the
+                # structural parse below files the MalformedManifest REJECT
+                # instead of this peek crashing the verifier.
                 # Absent/unparseable — fall through to structural verifier
                 # which will produce a proper MalformedManifest error.
                 pass
@@ -1261,8 +1266,8 @@ class BundleVerifier:
                 "envelope verified ok but payload_bytes/kid missing — contract violation",
             )
         try:
-            payload: dict = json.loads(res.payload_bytes)
-        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            payload: dict = strict_json_loads(res.payload_bytes)
+        except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
             return _fail(
                 "DSSE_MALFORMED_ENVELOPE",
                 f"signed payload is not valid JSON: {exc}",
@@ -3276,8 +3281,8 @@ class BundleVerifier:
         plugin-side (logging-only, never blocks) and is NOT duplicated here.
         """
         try:
-            raw = json.loads(raw_manifest_bytes)
-        except (json.JSONDecodeError, UnicodeDecodeError):
+            raw = strict_json_loads(raw_manifest_bytes)
+        except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
             raw = None
         seen: set[str] = set()
         for shape in (manifest, raw if isinstance(raw, dict) else None):
@@ -3579,6 +3584,7 @@ class BundleVerifier:
         # or the check crashed), and the face must not say "APPLIED" then —
         # the first version did (red team, 2026-09-01).
         work_set_applied = True
+        recompute_details: dict[str, str] = {}
         for df in run_spec_pinned_dispatch(
             bundle_dir,
             manifest,
@@ -3599,6 +3605,7 @@ class BundleVerifier:
             # and the rows an output actually reached.
             anchored_types_out=anchored_spec_types,
             resolved_types_out=resolved_spec_types,
+            recompute_details_out=recompute_details,
         ):
             if df.incomplete and df.check_name == "spec_pinned_dispatch:work_set":
                 work_set_applied = False
@@ -3662,6 +3669,18 @@ class BundleVerifier:
                 "close that."
             )
 
+        # WHAT EACH PASSING PRIMITIVE SAID ABOUT ITS OWN RUN. A mismatch carries
+        # `RecomputedValue.detail` in its failure message; a PASS carried it
+        # nowhere, so the one statement a green run most needs — how much of
+        # the input the rule actually judged — was invisible unless a wrapper
+        # recomputed and printed it itself (corner_load's verify.py did, and
+        # the shipped CLI could not). One row per passing output, in the
+        # order dispatch judged them; rendered by veriker/cli/verify.py. A disclosure
+        # the auditor's primitive authored, quoting producer data: reported,
+        # never trusted, never a gate. output_id is repr'd because it is
+        # producer-chosen and the face is string-assembled.
+        for _oid, _detail in recompute_details.items():
+            disclosures.append(f"recompute_detail: {_oid!r}: {_detail}")
         # WHOSE CODE recomputed, AND WHAT KIND OF METHOD IT IS, on the verdict
         # face — the primitive-side twin of the spec_anchor_provenance rows
         # above. Each row carries the A/B/C tier (D4) beside identity and

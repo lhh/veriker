@@ -77,7 +77,15 @@ _SCANNED_ROOTS = (
 #: Top-level directories with .py files that are deliberately NOT scanned.
 #: Empty today, and kept as an explicit seam so that skipping something later is
 #: a decision someone writes down rather than an omission nobody notices.
-_DELIBERATELY_UNSCANNED: frozenset[str] = frozenset()
+#: Top-level roots with .py files that emit no reason codes, each with the
+#: reason it is exempt rather than merely absent.
+_DELIBERATELY_UNSCANNED: frozenset[str] = frozenset({
+    # Static-analysis tooling. `tools/helper_drift.py` reads the tree with ast
+    # and reports duplicated helpers whose guard set drifted; it is never
+    # imported by the verifier and reaches no verdict surface, so it has no
+    # reason codes to collapse.
+    "tools",
+})
 
 #: The ONLY files allowed to contain a collapsible spelling, each because it is
 #: definitionally about those spellings. Kept as a file set rather than

@@ -41,6 +41,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from audit_bundle.bundle_manifest import register_typed_check
+from audit_bundle.iso8601 import parse_iso8601_utc
 from audit_bundle.admission import admit_json_file
 from audit_bundle.plugin import PluginResult
 from audit_bundle.stamp_claims import stamp_claim_key
@@ -797,17 +798,10 @@ def _parse_iso8601_to_aware(s: str):
     Naive datetimes (no TZ info) are explicitly REJECTED — the v0.2
     contract specifies UTC bindings, so a missing tzinfo is a parse error.
     """
-    if not isinstance(s, str) or not s:
-        return None
-    # Python <3.11 fromisoformat does not accept the 'Z' suffix; normalize.
-    normalized = s.replace("Z", "+00:00") if s.endswith("Z") else s
     try:
-        dt = datetime.fromisoformat(normalized)
+        return parse_iso8601_utc(s)
     except ValueError:
         return None
-    if dt.tzinfo is None:
-        return None
-    return dt.astimezone(timezone.utc)
 
 
 def _coerce_to_aware(value):

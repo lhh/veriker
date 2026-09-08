@@ -53,6 +53,7 @@ None when admitted; admit_json_file raises InputInadmissible on breach.
 from __future__ import annotations
 
 import json
+from .strict_json import strict_json_loads
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -256,11 +257,14 @@ def admit_json_file(
     if breach is not None:
         raise InputInadmissible(breach)
     try:
-        obj = json.loads(raw)
+        obj = strict_json_loads(raw)
     except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
+        # StrictJSONError (duplicate key / NaN / oversized int) is a ValueError:
+        # a producer document with two meanings is refused here, at the ONE
+        # loader, instead of parsed last-wins (measured PASS/0 on 2026-09-04).
         raise InputInadmissible(
             Verdict.reject(
-                INPUT_SIZE_EXCEEDED, f"{path.name}: not valid JSON: {exc}", check_name
+                INPUT_SIZE_EXCEEDED, f"{path.name}: not strict JSON: {exc}", check_name
             )
         ) from exc
     breach = admit_obj(obj, limits, check_name=check_name)
@@ -335,12 +339,12 @@ def admit_jsonl_file(
         if breach is not None:
             raise InputInadmissible(breach)
         try:
-            row = json.loads(line)
+            row = strict_json_loads(line)
         except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
             raise InputInadmissible(
                 Verdict.reject(
                     INPUT_SIZE_EXCEEDED,
-                    f"{path.name}: line {lineno} not valid JSON: {exc}",
+                    f"{path.name}: line {lineno} not strict JSON: {exc}",
                     check_name,
                 )
             ) from exc
@@ -410,9 +414,9 @@ def iter_admitted_jsonl_tolerant(
             if admit_bytes(line, limits, check_name=check_name) is not None:
                 continue  # tolerant: inadmissible line skipped like a malformed one
             try:
-                row = json.loads(line)
+                row = strict_json_loads(line)
             except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
-                continue
+                continue  # tolerant: a two-meaning line is skipped like a malformed one
             if admit_obj(row, limits, check_name=check_name) is not None:
                 continue
             yield row

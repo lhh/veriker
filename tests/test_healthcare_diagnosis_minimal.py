@@ -13,7 +13,7 @@ Test flow:
   6. Tamper-symptom-sha: mutate inputs/symptoms.json severity WITHOUT updating
      the manifest SHA, so file_integrity_many_small catches the SHA divergence.
 
-All three test cases match the SKILL.md tamper-test discipline (one SHA-bypass
+All three test cases match the pilot tamper-test discipline (one SHA-bypass
 catch, one re-derivation catch).
 """
 
@@ -157,7 +157,7 @@ def test_clean_bundle_shape(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Tamper tests — minimum 3 per SKILL.md
+# Tamper tests — minimum 3 per the pilot tamper-test discipline
 # ---------------------------------------------------------------------------
 
 

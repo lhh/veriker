@@ -42,8 +42,13 @@ Finding #1 (2026-05-27) — non-canonical outer-array encoding bypass [MED]
 
 from __future__ import annotations
 
-import cbor2
 import pytest
+
+# c19/COSE slice: bind cbor2 through importorskip so a lean install (one
+# without the `c19` extra) SKIPS this file instead of failing collection.
+# This REPLACES `import cbor2` deliberately — a guard placed after the bare
+# import never runs, because the import itself is what raises.
+cbor2 = pytest.importorskip("cbor2")
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 

@@ -41,9 +41,12 @@ emits reason codes into the bundle event log.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from audit_bundle.iso8601 import parse_iso8601_utc
+from audit_bundle.strict_json import strict_json_loads
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple
 
@@ -88,10 +91,54 @@ ROLE_REVOCATION_ROOT = "revocation-root"
 #: field, so it rides the TUF targets-role signature.
 RELEASE_MANIFEST_PAYLOAD_TYPE = "application/vnd.nexi.vkernel.release-manifest"
 
-#: Acceptable payload_type values — a fail-closed allowlist ENFORCED by
-#: fetch_release_manifest: a target whose signed `custom.payload_type` is
-#: unrecognized OR ABSENT is rejected (TUFTargetUnknownPayloadType) — absence
-#: must not evade the gate.
+#: The three C18 role documents are TARGETS of the same TUF repository as the
+#: release manifest (2026-09-02). Each rides the root-anchored targets /
+#: snapshot / timestamp chain, hash-pinned and payload-typed, and is only then
+#: structurally validated. Before this they were `json.loads` of a bundled file
+#: behind a `TBD` regex; whoever could write that file owned the role.
+ROLE_TARGET_NAMES: dict[str, str] = {
+    ROLE_SIGSTORE_TRUST_ROOT: f"{ROLE_SIGSTORE_TRUST_ROOT}/sigstore_trust_root.json",
+    ROLE_PLUGIN_ALLOWLIST: f"{ROLE_PLUGIN_ALLOWLIST}/plugin_allowlist.json",
+    ROLE_REVOCATION_ROOT: f"{ROLE_REVOCATION_ROOT}/revocation_root.json",
+}
+#: One payload type PER role document. The fetch requires the signed
+#: `custom.payload_type` to EQUAL the role's own type — membership in an
+#: allowlist is not enough (a role document served under a sibling role's type
+#: is a substitution, and the role_name check inside the document is the
+#: second, independent, line).
+ROLE_TARGET_PAYLOAD_TYPES: dict[str, str] = {
+    role: f"application/vnd.nexi.c18.{role}+json" for role in ROLE_TARGET_NAMES
+}
+
+#: The `sigstore-trust-root` role document pins DIGESTS of key files
+#: (`targets.<entry>.expected_sha256_at_v0_3_cut`), never bytes. The bytes are
+#: themselves targets of the same repository, under `sigstore-trust-root/keys/`,
+#: with their own exact payload type — so a key rides the chain hash-pinned by
+#: the targets metadata AND must hash to the digest the (2-of-3-signed,
+#: ceremony-filled) role document declares. `fetch_sigstore_trust_root_key` is
+#: the consumer; `veriker/cli/host_digest_verify.py` resolves its Rekor log key with it.
+SIGSTORE_TRUST_ROOT_KEY_PAYLOAD_TYPE = (
+    "application/vnd.nexi.c18.sigstore-trust-root.key+pem"
+)
+
+#: `type` values a `sigstore-trust-root` entry may carry for a LOG KEY, and the
+#: key class each admits. A PEM that loads as the other class is refused: the
+#: document says what the key is, the bytes do not get to decide.
+SIGSTORE_LOG_KEY_TYPES: dict[str, str] = {
+    "ecdsa-public-key-pem": "ec-p256",
+    "ed25519-public-key-pem": "ed25519",
+}
+
+
+def sigstore_trust_root_key_target_name(entry: str) -> str:
+    """TUF target name carrying the bytes of one `sigstore-trust-root` entry."""
+    return f"{ROLE_SIGSTORE_TRUST_ROOT}/keys/{entry}"
+
+#: Acceptable payload_type values. Since 2026-09-02 every fetch requires the
+#: EXACT type its target must carry (`_fetch_verified_target(expected_payload_type=…)`);
+#: this set is the documented vocabulary, not the gate. A target whose signed
+#: `custom.payload_type` is absent or differs from the expected one is rejected
+#: (TUFTargetUnknownPayloadType) — absence must not evade the gate.
 ACCEPTABLE_PAYLOAD_TYPES = frozenset(
     {
         RELEASE_MANIFEST_PAYLOAD_TYPE,
@@ -100,6 +147,8 @@ ACCEPTABLE_PAYLOAD_TYPES = frozenset(
         "application/vnd.spdx+json",
         "application/vnd.dev.sigstore.bundle+json",
         "application/vnd.slsa.provenance+json",
+        *ROLE_TARGET_PAYLOAD_TYPES.values(),
+        SIGSTORE_TRUST_ROOT_KEY_PAYLOAD_TYPE,
     }
 )
 
@@ -157,6 +206,32 @@ class TUFRoleSeparationViolation(TUFClientError):
     """The `sigstore-trust-root` role is supposed to be distinct from the
     C18 release role. This exception fires if a fetched metadata file
     conflates them."""
+
+
+class TUFTrustRootKeyUnpinned(TUFClientError):
+    """The `sigstore-trust-root` role document does not pin the requested key
+    entry (absent entry, malformed / unfilled digest, or a `type` that is not a
+    log-key type). Fail-closed: an unpinned key is not trust material."""
+
+
+class TUFTrustRootKeyDigestMismatch(TUFClientError):
+    """The key bytes fetched through the chain do not hash to the digest the
+    `sigstore-trust-root` role document declares for that entry. The served
+    bytes are what the feed signed; the role's pin is the ceremony's authority
+    and the two disagree — refuse."""
+
+
+class TUFRevocationRootSignatureInvalid(TUFClientError):
+    """The revocation-root role document carries fewer than `threshold` DISTINCT
+    role keyids with a valid Ed25519 signature over `rfc8785.dumps(signed)`.
+    Presence of a signature blob is not a signature; this is the check the
+    fetch's presence assert defers to, verified at the consumer."""
+
+
+class TUFRevocationRootSignerUnpinned(TUFClientError):
+    """The revocation-root role document's `pinned_revocation_list_signer_fingerprint`
+    does not name an Ed25519 key under `signed.keys`, so no revocation list can be
+    attributed to a signer the role vouches for. Fail-closed."""
 
 
 class TUFBootstrapPlaceholderPresent(TUFClientError):
@@ -313,10 +388,10 @@ def _load_bundled_root_impl(
     _assert_no_private_key_material(path.parent)
 
     try:
-        root_meta = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
+        root_meta = strict_json_loads(path.read_text(encoding="utf-8"))
+    except ValueError as exc:
         raise TUFClientError(
-            f"Bundled root.json at {path} is not valid JSON: {exc}"
+            f"Bundled root.json at {path} is not strict JSON: {exc}"
         ) from exc
 
     _assert_root_threshold(root_meta)
@@ -416,6 +491,11 @@ def _assert_root_threshold(root_meta: dict[str, Any]) -> None:
             f"root role has {len(keyids)} keyids; minimum required = "
             f"{MIN_ROOT_KEY_COUNT}."
         )
+    if len(set(keyids)) != len(keyids) or len(set(keyids)) < MIN_ROOT_KEY_COUNT:
+        raise TUFRootSignatureThresholdNotMet(
+            f"root role keyids must be {MIN_ROOT_KEY_COUNT} distinct keys; got "
+            f"{keyids!r} (a repeated keyid satisfies the count with one key)."
+        )
     # Each keyid must resolve to a key in `signed.keys`.
     for keyid in keyids:
         if keyid not in keys:
@@ -438,10 +518,10 @@ def _assert_root_not_expired(root_meta: dict[str, Any]) -> None:
     if not expires_str:
         raise TUFRootExpired("root.json missing signed.expires field.")
     try:
-        expires = datetime.fromisoformat(expires_str.replace("Z", "+00:00"))
+        expires = parse_iso8601_utc(expires_str)
     except ValueError as exc:
         raise TUFRootExpired(
-            f"root.json signed.expires {expires_str!r} not ISO 8601: {exc}"
+            f"root.json signed.expires {expires_str!r} not ISO 8601 UTC: {exc}"
         ) from exc
     if expires <= datetime.now(timezone.utc):
         raise TUFRootExpired(
@@ -462,7 +542,12 @@ def _assert_root_expiry_within_window(root_meta: dict[str, Any]) -> None:
     determinism (replay map)"). This cap is rotation hygiene, not a trust gate.
     """
     expires_str = root_meta["signed"]["expires"]
-    expires = datetime.fromisoformat(expires_str.replace("Z", "+00:00"))
+    try:
+        expires = parse_iso8601_utc(expires_str)
+    except ValueError as exc:
+        raise TUFRootExpired(
+            f"root.json signed.expires {expires_str!r} not ISO 8601 UTC: {exc}"
+        ) from exc
     now = datetime.now(timezone.utc)
     days_to_expiry = (expires - now).days
     if days_to_expiry > MAX_ROOT_EXPIRY_DAYS:
@@ -495,44 +580,33 @@ def _target_payload_type(target_info) -> str | None:
     return pt if isinstance(pt, str) else None
 
 
-def fetch_release_manifest(
+def _open_updater(
     *,
-    release_version: str,
-    feed_url: str = DEFAULT_TUF_FEED_URL,
-    trust_dir: Path | None = None,
-    allow_ephemeral_trust_dir: bool = False,
-) -> dict[str, Any]:
-    """Fetch the C18 release manifest from the TUF feed.
-
-    Uses python-tuf's `ngclient.Updater` for full TUF protocol enforcement
-    (consistent snapshots; ≤24h timestamp; ≤7d snapshot; monotonic version;
-    threshold ≥2-of-3 root signatures). Returns the parsed target file
-    contents.
+    feed_url: str,
+    trust_dir: Path | None,
+    allow_ephemeral_trust_dir: bool,
+    caller: str,
+):
+    """Seed a trust dir with the bundled root, drive `ngclient.Updater.refresh()`,
+    enforce the declared staleness windows on the fetched metadata, and return
+    the refreshed updater. Shared by every fetcher: the release manifest and the
+    three role documents ride ONE chain.
 
     `trust_dir` MUST be a PERSISTENT directory: TUF rollback/freeze protection
     depends on persisting the last-seen timestamp/snapshot/targets versions
     across invocations. A fresh ephemeral dir per call cannot detect a rollback
-    to a previously-valid (older, still-signed) version.
-    If `trust_dir is None` the call FAILS CLOSED unless
-    `allow_ephemeral_trust_dir=True` is set explicitly (one-shot / test use only,
-    where rollback protection is knowingly not required).
-
-    Raises TUFRootExpired / TUFSnapshotStale / TUFTimestampStale /
-    TUFVersionRollback / TUFConsistentSnapshotMissing as appropriate.
+    to a previously-valid (older, still-signed) version. If `trust_dir is None`
+    the call FAILS CLOSED unless `allow_ephemeral_trust_dir=True` is set
+    explicitly (one-shot / test use only).
     """
-    tuf = _import_python_tuf()
-
-    # Bundled root.json — embedded at compile time. These bytes are the pinned
-    # trust anchor passed to ngclient as `bootstrap` (see below).
-    bundled_root = load_bundled_root()
-    bundled_root_bytes = json.dumps(bundled_root).encode("utf-8")
-
-    # Fail closed on a missing trust dir: an ephemeral per-call dir silently
-    # disables rollback/freeze protection.
+    # Fail closed on a missing trust dir FIRST — a pure-argument check that
+    # needs neither python-tuf nor the bundled root, so a caller with no
+    # persistent trust dir gets the same typed refusal in every environment.
+    #
     if trust_dir is None:
         if not allow_ephemeral_trust_dir:
             raise TUFClientError(
-                "fetch_release_manifest requires a PERSISTENT trust_dir: TUF "
+                f"{caller} requires a PERSISTENT trust_dir: TUF "
                 "rollback/freeze protection depends on persisting last-seen "
                 "metadata versions across calls. A fresh dir per call cannot "
                 "detect rollback to an older, still-validly-signed version. "
@@ -543,6 +617,13 @@ def fetch_release_manifest(
         from tempfile import mkdtemp
 
         trust_dir = Path(mkdtemp(prefix="vkernel_tuf_"))
+
+    tuf = _import_python_tuf()
+
+    # Bundled root.json — embedded at compile time. These bytes are the pinned
+    # trust anchor passed to ngclient as `bootstrap` (see below).
+    bundled_root = load_bundled_root()
+    bundled_root_bytes = json.dumps(bundled_root).encode("utf-8")
 
     metadata_dir = trust_dir / "metadata"
     targets_dir = trust_dir / "targets"
@@ -582,28 +663,129 @@ def fetch_release_manifest(
             raise TUFConsistentSnapshotMissing(str(exc)) from exc
         raise TUFClientError(f"TUF refresh failed: {exc}") from exc
 
-    target_name = f"{ROLE_VKERNEL_RELEASE}/{release_version}/MANIFEST.txt"
+    _enforce_metadata_windows(metadata_dir)
+    return updater
+
+
+def _metadata_expires(metadata_dir: Path, name: str) -> datetime:
+    """`signed.expires` of a refreshed metadata file ngclient wrote to the trust dir."""
+    path = metadata_dir / name
+    try:
+        doc = strict_json_loads(path.read_text(encoding="utf-8"))
+        return parse_iso8601_utc(doc["signed"]["expires"])
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise TUFClientError(
+            f"refreshed {name} unreadable after ngclient refresh at {path}: {exc}"
+        ) from exc
+
+
+def _enforce_metadata_windows(metadata_dir: Path) -> None:
+    """Cap how far ahead the fetched timestamp / snapshot may expire.
+
+    python-tuf rejects EXPIRED metadata; it accepts whatever expiry the
+    publisher signed. `MAX_TIMESTAMP_STALENESS_HOURS` / `MAX_SNAPSHOT_STALENESS_DAYS`
+    are the client's own ceiling on that window — the freeze-attack bound the
+    module docstring has listed under "Enforced TUF discipline" since v0.3. Until
+    2026-09-02 both constants were read by nothing (a review checkpoint marked
+    the row PASS by citing the constant's existence). A feed that signs a
+    30-day snapshot is a feed a stale mirror can serve for 30 days; refuse it.
+    """
+    now = datetime.now(timezone.utc)
+    ts_expires = _metadata_expires(metadata_dir, "timestamp.json")
+    if ts_expires - now > timedelta(hours=MAX_TIMESTAMP_STALENESS_HOURS):
+        raise TUFTimestampStale(
+            f"timestamp.json expires {ts_expires.isoformat()}, more than "
+            f"MAX_TIMESTAMP_STALENESS_HOURS={MAX_TIMESTAMP_STALENESS_HOURS}h ahead; "
+            "a long-lived timestamp defeats freeze detection (fail-closed)."
+        )
+    snap_expires = _metadata_expires(metadata_dir, "snapshot.json")
+    if snap_expires - now > timedelta(days=MAX_SNAPSHOT_STALENESS_DAYS):
+        raise TUFSnapshotStale(
+            f"snapshot.json expires {snap_expires.isoformat()}, more than "
+            f"MAX_SNAPSHOT_STALENESS_DAYS={MAX_SNAPSHOT_STALENESS_DAYS}d ahead; "
+            "a long-lived snapshot defeats freeze detection (fail-closed)."
+        )
+    # The FETCHED root (python-tuf may have rotated past the bundled one) is held
+    # to the same ≤90d cap `load_bundled_root` puts on the bundled copy; until
+    # 2026-09-02 only the bundled root was capped, so a served long-lived root
+    # rotation rode the chain unrefused.
+    root_expires = _metadata_expires(metadata_dir, "root.json")
+    if root_expires - now > timedelta(days=MAX_ROOT_EXPIRY_DAYS):
+        raise TUFRootExpired(
+            f"fetched root.json expires {root_expires.isoformat()}, more than "
+            f"MAX_ROOT_EXPIRY_DAYS={MAX_ROOT_EXPIRY_DAYS}d ahead; a long-lived root "
+            "defeats the rotation discipline (fail-closed)."
+        )
+
+
+def _fetch_verified_target(
+    updater, target_name: str, *, expected_payload_type: str, feed_url: str
+) -> tuple[bytes, Any]:
+    """Resolve, type-check, download and hash-verify ONE target through ngclient.
+
+    Returns `(bytes, target_info)`. The signed `custom.payload_type` must EQUAL
+    `expected_payload_type` (absent counts as wrong: omission must not evade the
+    gate); the bytes are the hash-pinned target ngclient downloaded (a tampered
+    CDN copy fails inside `download_target`).
+    """
     target_info = updater.get_targetinfo(target_name)
     if target_info is None:
         raise TUFConsistentSnapshotMissing(
-            f"Release target {target_name!r} not in TUF feed at {feed_url}. "
-            "Either the release has not yet landed or the feed is split-viewed."
+            f"Target {target_name!r} not in TUF feed at {feed_url}. "
+            "Either it has not yet landed or the feed is split-viewed."
         )
-
-    # Fail-closed payload_type allowlist — previously documented but never
-    # enforced. The value rides the SIGNED targets metadata (`custom` field),
-    # so python-tuf has already authenticated it by the time we read it.
-    # Absent counts as unknown: omission must not evade the gate.
     payload_type = _target_payload_type(target_info)
-    if payload_type not in ACCEPTABLE_PAYLOAD_TYPES:
+    if payload_type != expected_payload_type:
         raise TUFTargetUnknownPayloadType(
-            f"Release target {target_name!r} declares payload_type="
-            f"{payload_type!r}; not in the fail-closed allowlist "
-            f"{sorted(ACCEPTABLE_PAYLOAD_TYPES)}. Targets MUST declare an "
-            "acceptable custom.payload_type in the signed targets metadata."
+            f"Target {target_name!r} declares payload_type={payload_type!r}; "
+            f"this target MUST declare exactly {expected_payload_type!r} in its "
+            "signed targets metadata (exact match, not allowlist membership)."
         )
+    try:
+        cached_path = updater.download_target(target_info)
+        data = Path(cached_path).read_bytes()
+    except Exception as exc:  # hash mismatch / length mismatch / transport
+        raise TUFClientError(
+            f"TUF target {target_name!r} download failed verification: {exc}"
+        ) from exc
+    return data, target_info, cached_path
 
-    cached_path = updater.download_target(target_info)
+
+def fetch_release_manifest(
+    *,
+    release_version: str,
+    feed_url: str = DEFAULT_TUF_FEED_URL,
+    trust_dir: Path | None = None,
+    allow_ephemeral_trust_dir: bool = False,
+) -> dict[str, Any]:
+    """Fetch the C18 release manifest from the TUF feed.
+
+    Uses python-tuf's `ngclient.Updater` for full TUF protocol enforcement
+    (consistent snapshots; monotonic version; threshold ≥2-of-3 root
+    signatures), plus the client's own ≤24h timestamp / ≤7d snapshot windows
+    (`_enforce_metadata_windows`). Returns the parsed target file contents.
+
+    `trust_dir` MUST be persistent — see `_open_updater`.
+
+    Raises TUFRootExpired / TUFSnapshotStale / TUFTimestampStale /
+    TUFVersionRollback / TUFConsistentSnapshotMissing as appropriate.
+    """
+    updater = _open_updater(
+        feed_url=feed_url,
+        trust_dir=trust_dir,
+        allow_ephemeral_trust_dir=allow_ephemeral_trust_dir,
+        caller="fetch_release_manifest",
+    )
+    target_name = f"{ROLE_VKERNEL_RELEASE}/{release_version}/MANIFEST.txt"
+    # The release manifest must declare ITS OWN payload type — exactly. Until
+    # 2026-09-02 this site accepted any of the six documented types, so a
+    # manifest declaring an SPDX type passed.
+    _data, target_info, cached_path = _fetch_verified_target(
+        updater,
+        target_name,
+        expected_payload_type=RELEASE_MANIFEST_PAYLOAD_TYPE,
+        feed_url=feed_url,
+    )
     return {
         "target_name": target_name,
         "target_path": cached_path,
@@ -613,6 +795,51 @@ def fetch_release_manifest(
         },
         "feed_url": feed_url,
         "release_version": release_version,
+    }
+
+
+def _fetch_role_document(
+    role: str,
+    *,
+    feed_url: str,
+    trust_dir: Path | None,
+    allow_ephemeral_trust_dir: bool,
+    caller: str,
+) -> dict[str, Any]:
+    """TUF-fetch one C18 role document and parse it (no structural validation here)."""
+    updater = _open_updater(
+        feed_url=feed_url,
+        trust_dir=trust_dir,
+        allow_ephemeral_trust_dir=allow_ephemeral_trust_dir,
+        caller=caller,
+    )
+    target_name = ROLE_TARGET_NAMES[role]
+    data, target_info, _ = _fetch_verified_target(
+        updater,
+        target_name,
+        expected_payload_type=ROLE_TARGET_PAYLOAD_TYPES[role],
+        feed_url=feed_url,
+    )
+    try:
+        doc = strict_json_loads(data)
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise TUFClientError(
+            f"{role} role document fetched via TUF is not strict JSON: {exc}"
+        ) from exc
+    if not isinstance(doc, dict):
+        raise TUFClientError(f"{role} role document is not a JSON object.")
+    return {
+        "document": doc,
+        "target_name": target_name,
+        "feed_url": feed_url,
+        "target_info": {
+            "length": target_info.length,
+            "hashes": dict(target_info.hashes),
+        },
+        "authenticated_by": (
+            f"TUF chain from bundled root: targets/snapshot/timestamp at {feed_url}, "
+            f"payload_type={ROLE_TARGET_PAYLOAD_TYPES[role]}"
+        ),
     }
 
 
@@ -632,30 +859,34 @@ _BUNDLED_REVOCATION_ROOT_PATH = (
 )
 
 
-def _fetch_sigstore_trust_root_impl(
-    bundled_path: Path | None = None,
+def validate_sigstore_trust_root_document(
+    role: dict[str, Any],
     *,
-    allow_placeholders: bool,
+    source: str,
+    strict: bool = True,
+    now: datetime | None = None,
 ) -> dict[str, Any]:
-    """Shared core for :func:`fetch_sigstore_trust_root` (strict) and the
-    bootstrap variant in ``c18_tuf_bootstrap``.
+    """Structural validation of a `sigstore-trust-root` role DOCUMENT (already
+    obtained — via the TUF chain by `fetch_sigstore_trust_root`, or from the
+    bundled bootstrap file by `c18_tuf_bootstrap`).
 
-    ``allow_placeholders`` skips ONLY the unfilled-``TBD-*`` fail-closed assert;
-    the role-separation + required-targets checks run unconditionally.
-    Production code MUST NOT call this directly — use the strict public wrapper.
-    """
-    path = bundled_path or _BUNDLED_SIGSTORE_TRUST_ROOT_PATH
-    if not path.is_file():
-        raise TUFClientError(
-            f"sigstore-trust-root role file missing at {path}. The OCI image "
-            "build MUST embed this at compile time."
-        )
-    try:
-        role = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        raise TUFClientError(
-            f"sigstore-trust-root role file at {path} is not valid JSON: {exc}"
-        ) from exc
+    Since 2026-09-02 the document has the SAME signed shape as `revocation-root`:
+    `signed.targets` (the Fulcio / CTFE / Rekor entries with their digest pins and
+    key types), `signed.keys` + `signed.roles[sigstore-trust-root]` (three
+    distinct Ed25519 approver keys, threshold 2, keyid = sha256 of the key),
+    `signed.expires`, `rotation_policy`, and `signatures` over `rfc8785(signed)`.
+    Until then it was flat, unsigned JSON: the Rekor log key's pin, bytes and
+    declared type were authenticated by the release TARGETS key alone (threshold
+    1 in the bundled root) while the prose called the pin "2-of-3, ceremony-
+    filled" — the exact class the revocation root had been fixed for one seam
+    over (fresh pass, process lens, 2026-09-02). `strict=False` skips ONLY the
+    signature-presence and unfilled-``TBD-*`` asserts and the keyid-derivation
+    rule; role separation, required targets, quorum shape and expiry always run.
+    Signature VERIFICATION is `verify_role_document_signatures` (the strict
+    fetcher runs it after this)."""
+    path = Path(source)
+    if not isinstance(role, dict):
+        raise TUFClientError("sigstore-trust-root document is not a JSON object.")
     role_name = role.get("role_name")
     if role_name != ROLE_SIGSTORE_TRUST_ROOT:
         raise TUFRoleSeparationViolation(
@@ -663,7 +894,15 @@ def _fetch_sigstore_trust_root_impl(
             f"expected {ROLE_SIGSTORE_TRUST_ROOT!r}. Role separation "
             "broken — refusing to proceed."
         )
-    targets = role.get("targets", {})
+    signed = role.get("signed")
+    if not isinstance(signed, dict):
+        raise TUFClientError(
+            "sigstore-trust-root file missing a `signed` object (the role document "
+            "is a signed 2-of-3 document; its targets live under signed.targets)."
+        )
+    targets = signed.get("targets")
+    if not isinstance(targets, dict):
+        raise TUFClientError("sigstore-trust-root file: signed.targets is not an object.")
     required = {"fulcio.pub", "ctfe.pub", "rekor.pub", "sigstore_root_threshold.json"}
     missing = required - set(targets.keys())
     if missing:
@@ -672,60 +911,188 @@ def _fetch_sigstore_trust_root_impl(
             "The role MUST enumerate Fulcio + CTFE + Rekor pubkeys plus the "
             "rotation-policy doc."
         )
-    _assert_no_unfilled_placeholders(role, path, allow=allow_placeholders)
+    expires_dt, max_days = _validate_role_quorum(
+        role, role_name=ROLE_SIGSTORE_TRUST_ROOT, strict=strict
+    )
+    _grade_role_expiry(role, expires_dt, max_days, path=path, strict=strict, now=now)
     return role
 
 
-def fetch_sigstore_trust_root(
+def _fetch_sigstore_trust_root_impl(
     bundled_path: Path | None = None,
+    *,
+    allow_placeholders: bool,
 ) -> dict[str, Any]:
-    """Load the bundled `sigstore-trust-root` role file (STRICT).
+    """Read the BUNDLED role file and validate it. Used ONLY by the bootstrap
+    module (``c18_tuf_bootstrap.fetch_sigstore_trust_root_bootstrap_unverified``);
+    the strict public fetcher goes through the TUF chain, never this file."""
+    path = bundled_path or _BUNDLED_SIGSTORE_TRUST_ROOT_PATH
+    if not path.is_file():
+        raise TUFClientError(
+            f"sigstore-trust-root role file missing at {path}. The OCI image "
+            "build MUST embed this at compile time."
+        )
+    try:
+        role = strict_json_loads(path.read_text(encoding="utf-8"))
+    except ValueError as exc:
+        raise TUFClientError(
+            f"sigstore-trust-root role file at {path} is not strict JSON: {exc}"
+        ) from exc
+    return validate_sigstore_trust_root_document(
+        role, source=str(path), strict=not allow_placeholders
+    )
+
+
+def fetch_sigstore_trust_root(
+    *,
+    feed_url: str = DEFAULT_TUF_FEED_URL,
+    trust_dir: Path | None = None,
+    allow_ephemeral_trust_dir: bool = False,
+) -> dict[str, Any]:
+    """Fetch the `sigstore-trust-root` role document THROUGH THE TUF CHAIN (STRICT).
+
+    The document is a target of the release repository (`ROLE_TARGET_NAMES`),
+    authenticated by the root-anchored targets / snapshot / timestamp chain,
+    hash-pinned, required to carry exactly its own payload type, and only then
+    structurally validated (`validate_sigstore_trust_root_document`, strict —
+    a signed document carrying an unfilled ``TBD-*`` value is still refused).
 
     This role is SEPARATE from the C18 release role, with a distinct rotation
     cadence (Sigstore key-rotation announcements vs C18 release cuts). A role
     separation violation raises `TUFRoleSeparationViolation`.
 
-    At v0.3 the consumer reads the BUNDLED role file (embedded into the
-    OCI image at compile time). When v0.4 lands the TUF feed-fetch path,
-    this function will route through `python-tuf`'s ngclient.Updater
-    against the `sigstore-trust-root` role's separate metadata file at
-    `manifest.vkernel.dev/sigstore-trust-root/`.
-
-    Always fails closed: a role file carrying any ``TBD-*`` ceremony placeholder
-    value (e.g. unfilled ``expected_sha256_at_v0_3_cut``) is REJECTED with
-    TUFBootstrapPlaceholderPresent. There is NO opt-out parameter here. The
-    deliberately-unverified bootstrap variant lives in
+    There is NO local-path input: until 2026-09-02 this function accepted
+    `bundled_path` and returned whatever JSON was there behind a ``TBD`` regex.
+    The bundled copy is reachable only through
     ``c18_tuf_bootstrap.fetch_sigstore_trust_root_bootstrap_unverified``.
+    Returns an envelope `{"document", "target_name", "feed_url", "target_info",
+    "authenticated_by"}` so the value itself says which chain authenticated it,
+    unlike the bare dict the bootstrap loaders return.
     """
-    return _fetch_sigstore_trust_root_impl(bundled_path, allow_placeholders=False)
+    fetched = _fetch_role_document(
+        ROLE_SIGSTORE_TRUST_ROOT,
+        feed_url=feed_url,
+        trust_dir=trust_dir,
+        allow_ephemeral_trust_dir=allow_ephemeral_trust_dir,
+        caller="fetch_sigstore_trust_root",
+    )
+    validate_sigstore_trust_root_document(
+        fetched["document"],
+        source=ROLE_TARGET_NAMES[ROLE_SIGSTORE_TRUST_ROOT],
+        strict=True,
+    )
+    # The chain authenticates the BYTES (targets key, threshold 1). The document's
+    # own 2-of-3 is what makes the pin the ceremony's, not one targets key's.
+    fetched["role_signed_by"] = verify_role_document_signatures(
+        fetched["document"], role_name=ROLE_SIGSTORE_TRUST_ROOT
+    )
+    return fetched
 
 
-def _fetch_plugin_allowlist_impl(
-    bundled_path: Path | None = None,
+_SHA256_PIN_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+
+
+def fetch_sigstore_trust_root_key(
+    entry: str,
     *,
-    allow_placeholders: bool,
+    feed_url: str = DEFAULT_TUF_FEED_URL,
+    trust_dir: Path | None = None,
+    allow_ephemeral_trust_dir: bool = False,
 ) -> dict[str, Any]:
-    """Shared core for :func:`fetch_plugin_allowlist` (strict) and the bootstrap
-    variant in ``c18_tuf_bootstrap``.
+    """Fetch the BYTES of one `sigstore-trust-root` key entry through the TUF chain.
 
-    ``allow_placeholders`` skips ONLY the unfilled-``TBD-*`` fail-closed assert;
-    the role-separation + registry-allowlist + required-fields checks run
-    unconditionally. Production code MUST NOT call this directly — use the strict
-    public wrapper.
+    The role document (`fetch_sigstore_trust_root`, strict) pins
+    `targets[entry].expected_sha256_at_v0_3_cut` and `targets[entry].type`. The
+    bytes live at target `sigstore-trust-root/keys/<entry>` with payload type
+    `SIGSTORE_TRUST_ROOT_KEY_PAYLOAD_TYPE`, hash-pinned by the targets metadata
+    (ngclient) — and are ADDITIONALLY required to hash to the role document's
+    declared digest. Two pins: the feed's (targets key), and the one inside the
+    role document, whose own 2-of-3 signatures the strict role fetch verifies
+    (`role_signed_by` on the envelope). Until 2026-09-02 the role document was
+    unsigned, so both pins rode the targets key.
+
+    Refuses (typed, never a fallback): an entry the role does not name, a digest
+    that is not `sha256:<64 hex>` (the strict role fetch already refuses `TBD`),
+    a `type` outside `SIGSTORE_LOG_KEY_TYPES`, a wrong payload type on the key
+    target, and a digest disagreement. Returns an envelope
+    `{key_bytes, entry, declared_type, declared_sha256, target_name, feed_url,
+    role, authenticated_by}` so the value says where the key came from. It does
+    NOT load or type-check the key object — the consumer does that against
+    `declared_type` (`veriker/cli/host_digest_verify.py::_resolve_rekor_log_key`).
     """
-    path = bundled_path or _BUNDLED_PLUGIN_ALLOWLIST_PATH
-    if not path.is_file():
-        raise TUFClientError(
-            f"plugin-allowlist role file missing at {path}. The OCI image "
-            "build MUST embed this at compile time."
+    role = fetch_sigstore_trust_root(
+        feed_url=feed_url,
+        trust_dir=trust_dir,
+        allow_ephemeral_trust_dir=allow_ephemeral_trust_dir,
+    )
+    targets = role["document"]["signed"].get("targets", {})
+    pinned = targets.get(entry) if isinstance(targets, dict) else None
+    if not isinstance(pinned, dict):
+        raise TUFTrustRootKeyUnpinned(
+            f"sigstore-trust-root role names no entry {entry!r} (entries: "
+            f"{sorted(targets) if isinstance(targets, dict) else '?'}); an unpinned "
+            "key is not trust material."
         )
-    try:
-        role = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        raise TUFClientError(
-            f"plugin-allowlist role file at {path} is not valid JSON: {exc}"
-        ) from exc
+    declared_sha = pinned.get("expected_sha256_at_v0_3_cut")
+    if not isinstance(declared_sha, str) or not _SHA256_PIN_RE.match(declared_sha):
+        raise TUFTrustRootKeyUnpinned(
+            f"sigstore-trust-root entry {entry!r} carries no sha256:<64 hex> pin "
+            f"(expected_sha256_at_v0_3_cut={declared_sha!r})."
+        )
+    declared_type = pinned.get("type")
+    if declared_type not in SIGSTORE_LOG_KEY_TYPES:
+        raise TUFTrustRootKeyUnpinned(
+            f"sigstore-trust-root entry {entry!r} has type={declared_type!r}; a log "
+            f"key entry must be one of {sorted(SIGSTORE_LOG_KEY_TYPES)}."
+        )
+    updater = _open_updater(
+        feed_url=feed_url,
+        trust_dir=trust_dir,
+        allow_ephemeral_trust_dir=allow_ephemeral_trust_dir,
+        caller="fetch_sigstore_trust_root_key",
+    )
+    target_name = sigstore_trust_root_key_target_name(entry)
+    data, target_info, _ = _fetch_verified_target(
+        updater,
+        target_name,
+        expected_payload_type=SIGSTORE_TRUST_ROOT_KEY_PAYLOAD_TYPE,
+        feed_url=feed_url,
+    )
+    import hashlib  # noqa: PLC0415 — stdlib
 
+    actual_sha = "sha256:" + hashlib.sha256(data).hexdigest()
+    if actual_sha != declared_sha:
+        raise TUFTrustRootKeyDigestMismatch(
+            f"sigstore-trust-root entry {entry!r} declares {declared_sha}; the key "
+            f"bytes served at {target_name!r} hash to {actual_sha}. The role's pin is "
+            "the ceremony's authority and the feed disagrees with it (fail-closed)."
+        )
+    return {
+        "key_bytes": data,
+        "entry": entry,
+        "declared_type": declared_type,
+        "declared_sha256": declared_sha,
+        "target_name": target_name,
+        "feed_url": feed_url,
+        "role": role,
+        "role_signed_by": tuple(role.get("role_signed_by", ())),
+        "authenticated_by": (
+            f"TUF chain from bundled root: targets/snapshot/timestamp at {feed_url}, "
+            f"payload_type={SIGSTORE_TRUST_ROOT_KEY_PAYLOAD_TYPE}; bytes equal the "
+            f"sigstore-trust-root role document digest {declared_sha} for entry "
+            f"{entry!r} (type {declared_type}); role document's own 2-of-3 verified "
+            f"(signed_by={','.join(role.get('role_signed_by', ()))})"
+        ),
+    }
+
+
+def validate_plugin_allowlist_document(
+    role: dict[str, Any], *, source: str, strict: bool = True
+) -> dict[str, Any]:
+    """Structural validation of a `plugin-allowlist` role DOCUMENT (already
+    obtained). `strict=False` skips ONLY the unfilled-``TBD-*`` assert; role
+    separation + registry allowlist + required entry fields always run."""
+    path = Path(source)
     role_name = role.get("role_name")
     if role_name != ROLE_PLUGIN_ALLOWLIST:
         raise TUFRoleSeparationViolation(
@@ -760,63 +1127,216 @@ def _fetch_plugin_allowlist_impl(
                 "Each plugin MUST enumerate (oci_artifact, oci_digest, "
                 "cosign_cert_identity, slsa_provenance_digest)."
             )
-    _assert_no_unfilled_placeholders(role, path, allow=allow_placeholders)
+    _assert_no_unfilled_placeholders(role, path, allow=not strict)
     return role
 
 
-def fetch_plugin_allowlist(
-    bundled_path: Path | None = None,
-) -> dict[str, Any]:
-    """Load the bundled `plugin-allowlist` role file (STRICT).
-
-    Every plugin loaded by the substrate verifier MUST appear in this
-    TUF-distributed allowlist by OCI digest. The c18_plugin_oci_loader.py
-    module consumes this file.
-
-    Defensive checks:
-      - registry_org_allowlist contains exactly `ghcr.io/veriker/`
-        (TUFRoleSeparationViolation otherwise — cross-registry plugin loading
-        is a separate posture decision)
-      - Each entry carries oci_artifact + oci_digest_at_v0_3_cut +
-        cosign_cert_identity + slsa_provenance_digest_at_v0_3_cut
-
-    Always fails closed: an allowlist carrying any ``TBD-*`` ceremony placeholder
-    (e.g. an unfilled ``oci_digest_at_v0_3_cut``) is REJECTED with
-    TUFBootstrapPlaceholderPresent — loading plugins against a placeholder digest
-    would pin nothing. There is NO opt-out parameter here. The
-    deliberately-unverified bootstrap variant lives in
-    ``c18_tuf_bootstrap.fetch_plugin_allowlist_bootstrap_unverified``.
-    """
-    return _fetch_plugin_allowlist_impl(bundled_path, allow_placeholders=False)
-
-
-def _fetch_revocation_root_impl(
+def _fetch_plugin_allowlist_impl(
     bundled_path: Path | None = None,
     *,
     allow_placeholders: bool,
 ) -> dict[str, Any]:
-    """Shared core for :func:`fetch_revocation_root` (strict) and the bootstrap
-    variant in ``c18_tuf_bootstrap``.
-
-    ``allow_placeholders`` skips ONLY the two bootstrap fail-closed asserts
-    (signature-blob presence + no unfilled ``TBD-*`` values); the role-name,
-    2-of-3 threshold, Ed25519-keyid, rotation-policy, and expiry checks run
-    unconditionally. Production code MUST NOT call this directly — use the strict
-    public wrapper.
-    """
-    path = bundled_path or _BUNDLED_REVOCATION_ROOT_PATH
+    """Read the BUNDLED role file and validate it. Bootstrap module ONLY."""
+    path = bundled_path or _BUNDLED_PLUGIN_ALLOWLIST_PATH
     if not path.is_file():
         raise TUFClientError(
-            f"revocation-root role file missing at {path}. The OCI image build "
-            "MUST embed this at compile time (pyproject package-data)."
+            f"plugin-allowlist role file missing at {path}. The OCI image "
+            "build MUST embed this at compile time."
         )
     try:
-        role = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
+        role = strict_json_loads(path.read_text(encoding="utf-8"))
+    except ValueError as exc:
         raise TUFClientError(
-            f"revocation-root role file at {path} is not valid JSON: {exc}"
+            f"plugin-allowlist role file at {path} is not strict JSON: {exc}"
+        ) from exc
+    return validate_plugin_allowlist_document(
+        role, source=str(path), strict=not allow_placeholders
+    )
+
+
+def fetch_plugin_allowlist(
+    *,
+    feed_url: str = DEFAULT_TUF_FEED_URL,
+    trust_dir: Path | None = None,
+    allow_ephemeral_trust_dir: bool = False,
+) -> dict[str, Any]:
+    """Fetch the `plugin-allowlist` role document THROUGH THE TUF CHAIN (STRICT).
+
+    Every plugin loaded by the substrate verifier MUST appear in this
+    TUF-distributed allowlist by OCI digest; `c18_plugin_oci_loader` consumes
+    the returned dict. Authenticated by the root-anchored chain, hash-pinned,
+    exact payload type, then `validate_plugin_allowlist_document` (strict).
+    No local-path input (see `fetch_sigstore_trust_root`). Returns an envelope
+    `{"document", "target_name", "feed_url", "target_info", "authenticated_by"}`
+    — the value itself says which chain authenticated it, unlike the bare dict
+    the `*_bootstrap_unverified` loaders return.
+    """
+    fetched = _fetch_role_document(
+        ROLE_PLUGIN_ALLOWLIST,
+        feed_url=feed_url,
+        trust_dir=trust_dir,
+        allow_ephemeral_trust_dir=allow_ephemeral_trust_dir,
+        caller="fetch_plugin_allowlist",
+    )
+    validate_plugin_allowlist_document(
+        fetched["document"],
+        source=ROLE_TARGET_NAMES[ROLE_PLUGIN_ALLOWLIST],
+        strict=True,
+    )
+    # Stated on the value, not in prose: this role has NO consumer in the shipped
+    # tree (census 2026-09-02: nothing under audit_bundle/ or cli/ constructs
+    # `PluginOCILoader` or imports a plugin by name at runtime; `veriker/cli/verify.py`
+    # builds its plugin set from the distribution's registered classes). The
+    # loader class is the INTENDED consumer and takes this envelope's `document`;
+    # wiring it in is a posture decision (which host-side step admits plugins),
+    # not something to invent here.
+    fetched["consumer"] = (
+        "NONE in the shipped tree (2026-09-02): no shipped path loads plugins from "
+        "OCI; c18_plugin_oci_loader.PluginOCILoader is the intended consumer and "
+        "takes this envelope's `document` as its `allowlist`."
+    )
+    # Also stated on the value: unlike sigstore-trust-root and revocation-root,
+    # this document carries NO signatures of its own, so it is authenticated by
+    # the release targets key alone (threshold 1 in the bundled root). Signing it
+    # is part of wiring its consumer, not something to do ahead of one.
+    fetched["role_signed_by"] = ()
+    fetched["signatures"] = (
+        "NONE: the plugin-allowlist document is unsigned; authenticated by the "
+        "TUF targets key only (threshold 1), no 2-of-3 of its own."
+    )
+    return fetched
+
+
+def _validate_role_quorum(
+    role: dict[str, Any], *, role_name: str, strict: bool
+) -> tuple[datetime, int]:
+    """The 2-of-3 quorum block every signed role document carries (`signed.keys`,
+    `signed.roles[role_name]`, `rotation_policy`, `signed.expires`). Shared by the
+    `revocation-root` and `sigstore-trust-root` validators so the two roles are
+    held to ONE rule. Returns `(expires_dt, max_validity_days)`; the caller grades
+    the expiry after its ceremony asserts. See `validate_revocation_root_document`
+    for what each check refuses and why."""
+    signed = role.get("signed")
+    if not isinstance(signed, dict):
+        raise TUFClientError(f"{role_name} file missing a `signed` object.")
+    roles = signed.get("roles")
+    if not isinstance(roles, dict):
+        raise TUFClientError(f"{role_name} file: signed.roles is not an object.")
+    rr = roles.get(role_name)
+    if not isinstance(rr, dict):
+        raise TUFClientError(
+            f"{role_name} file missing signed.roles[{role_name!r}]."
+        )
+    if rr.get("threshold") != 2:
+        raise TUFClientError(
+            f"{role_name} threshold={rr.get('threshold')!r}; must be 2 "
+            "(2-of-3 distinct approvers per C18 root discipline)."
+        )
+    keyids = rr.get("keyids", [])
+    if (
+        not isinstance(keyids, list)
+        or not all(isinstance(k, str) for k in keyids)
+        or len(keyids) != 3
+        or len(set(keyids)) != 3
+    ):
+        raise TUFClientError(
+            f"{role_name} must enumerate exactly 3 distinct keyids; got {keyids!r}."
+        )
+    keys = signed.get("keys")
+    if not isinstance(keys, dict):
+        raise TUFClientError(f"{role_name} file: signed.keys is not an object.")
+    publics_seen: dict[str, str] = {}
+    for kid in keyids:
+        key = keys.get(kid)
+        if not isinstance(key, dict):
+            raise TUFClientError(
+                f"{role_name} keyid {kid!r} not under signed.keys."
+            )
+        if key.get("keytype") != "ed25519":
+            raise TUFClientError(
+                f"{role_name} keyid {kid!r} keytype={key.get('keytype')!r}; "
+                "expected 'ed25519'."
+            )
+        keyval = key.get("keyval")
+        pub = keyval.get("public", "") if isinstance(keyval, dict) else ""
+        if not isinstance(pub, str) or len(pub) != 64:
+            raise TUFClientError(
+                f"{role_name} keyid {kid!r} public is {len(pub) if isinstance(pub, str) else 'not a string of'} hex chars, "
+                "expected 64 (Ed25519 raw 32-byte)."
+            )
+        try:
+            pub_raw = bytes.fromhex(pub)
+        except ValueError as exc:
+            raise TUFClientError(
+                f"{role_name} keyid {kid!r} public is not valid hex."
+            ) from exc
+        # Three DISTINCT keys, not three distinct labels: the threshold counts keys.
+        if pub.lower() in publics_seen:
+            raise TUFClientError(
+                f"{role_name} keyids {publics_seen[pub.lower()]!r} and {kid!r} "
+                "carry the SAME public key; the role needs three distinct keys, "
+                "and one key under two labels is a 1-of-3 role."
+            )
+        publics_seen[pub.lower()] = kid
+        if strict:
+            derived = hashlib.sha256(pub_raw).hexdigest()
+            if kid != derived:
+                raise TUFClientError(
+                    f"{role_name} keyid {kid!r} is not the sha256 of its own "
+                    f"public key ({derived}); a keyid is the hash of the key it "
+                    "names, never a free label (refused, not renamed)."
+                )
+
+    rotation = role.get("rotation_policy")
+    if not isinstance(rotation, dict):
+        raise TUFClientError(f"{role_name} file: rotation_policy is not an object.")
+    max_days = rotation.get("max_validity_days")
+    if not isinstance(max_days, int) or max_days > 90:
+        raise TUFClientError(
+            f"{role_name} rotation_policy.max_validity_days={max_days!r}; "
+            "must be an int <= 90 (mirrors C18 release-root rotation discipline)."
+        )
+    expires = signed.get("expires")
+    if not isinstance(expires, str):
+        raise TUFClientError(f"{role_name} signed.expires missing or not a string.")
+    try:
+        expires_dt = parse_iso8601_utc(expires)
+    except ValueError as exc:
+        raise TUFClientError(
+            f"{role_name} signed.expires={expires!r} is not ISO-8601 UTC: {exc}"
         ) from exc
 
+    return expires_dt, max_days
+
+
+def validate_revocation_root_document(
+    role: dict[str, Any],
+    *,
+    source: str,
+    strict: bool = True,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Structural validation of a `revocation-root` role DOCUMENT (already
+    obtained). `strict=False` skips ONLY the two bootstrap asserts (signature
+    presence + no unfilled ``TBD-*``) and the keyid-derivation rule; role name,
+    2-of-3 threshold, Ed25519 keyids, three DISTINCT keys, rotation policy and
+    expiry always run.
+
+    `now` is the instant the expiry is graded against (strict only). A consumer
+    that grades a revocation LIST against an injected `verifier_now` passes the
+    same instant here so one run has ONE clock; None means the wall clock.
+
+    Strict documents must satisfy `keyid == sha256(keyval.public raw32).hex()`
+    for every role keyid — the same rule the DSSE allowlist applies (a
+    mislabeled entry is refused, never renamed). Until 2026-09-02 a keyid was a
+    free label, so ONE private key listed under two labels satisfied a 2-of-3
+    threshold (fresh-pass witness `w_dsse.py A`).
+
+    A malformed shape (a list where an object is required) is a `TUFClientError`
+    on the DOCUMENT, never an AttributeError blamed on the verifier."""
+    path = Path(source)
+    if not isinstance(role, dict):
+        raise TUFClientError("revocation-root document is not a JSON object.")
     role_name = role.get("role_name")
     if role_name != ROLE_REVOCATION_ROOT:
         raise TUFRoleSeparationViolation(
@@ -824,105 +1344,257 @@ def _fetch_revocation_root_impl(
             f"expected {ROLE_REVOCATION_ROOT!r}. Role separation broken — "
             "refusing to proceed."
         )
-
-    signed = role.get("signed")
-    if not isinstance(signed, dict):
-        raise TUFClientError("revocation-root file missing a `signed` object.")
-    rr = signed.get("roles", {}).get(ROLE_REVOCATION_ROOT)
-    if not isinstance(rr, dict):
-        raise TUFClientError(
-            f"revocation-root file missing signed.roles[{ROLE_REVOCATION_ROOT!r}]."
-        )
-    if rr.get("threshold") != 2:
-        raise TUFClientError(
-            f"revocation-root threshold={rr.get('threshold')!r}; must be 2 "
-            "(2-of-3 distinct approvers per C18 root discipline)."
-        )
-    keyids = rr.get("keyids", [])
-    if len(keyids) != 3 or len(set(keyids)) != 3:
-        raise TUFClientError(
-            f"revocation-root must enumerate exactly 3 distinct keyids; got {keyids!r}."
-        )
-    keys = signed.get("keys", {})
-    for kid in keyids:
-        key = keys.get(kid)
-        if not isinstance(key, dict):
-            raise TUFClientError(
-                f"revocation-root keyid {kid!r} not under signed.keys."
-            )
-        if key.get("keytype") != "ed25519":
-            raise TUFClientError(
-                f"revocation-root keyid {kid!r} keytype={key.get('keytype')!r}; "
-                "expected 'ed25519'."
-            )
-        pub = key.get("keyval", {}).get("public", "")
-        if len(pub) != 64:
-            raise TUFClientError(
-                f"revocation-root keyid {kid!r} public is {len(pub)} hex chars, "
-                "expected 64 (Ed25519 raw 32-byte)."
-            )
-        try:
-            int(pub, 16)
-        except ValueError as exc:
-            raise TUFClientError(
-                f"revocation-root keyid {kid!r} public is not valid hex."
-            ) from exc
-
-    rotation = role.get("rotation_policy", {})
-    max_days = rotation.get("max_validity_days")
-    if not isinstance(max_days, int) or max_days > 90:
-        raise TUFClientError(
-            f"revocation-root rotation_policy.max_validity_days={max_days!r}; "
-            "must be an int <= 90 (mirrors C18 release-root rotation discipline)."
-        )
-    expires = signed.get("expires")
-    if not isinstance(expires, str):
-        raise TUFClientError("revocation-root signed.expires missing or not a string.")
-    try:
-        datetime.fromisoformat(expires.replace("Z", "+00:00"))
-    except ValueError as exc:
-        raise TUFClientError(
-            f"revocation-root signed.expires={expires!r} is not ISO-8601."
-        ) from exc
-
-    _assert_root_signatures_filled(role, path, allow=allow_placeholders)
-    _assert_no_unfilled_placeholders(role, path, allow=allow_placeholders)
-
+    expires_dt, max_days = _validate_role_quorum(
+        role, role_name=ROLE_REVOCATION_ROOT, strict=strict
+    )
+    _grade_role_expiry(role, expires_dt, max_days, path=path, strict=strict, now=now)
     return role
 
 
-def fetch_revocation_root(
-    bundled_path: Path | None = None,
-) -> dict[str, Any]:
-    """Load + structurally validate the bundled `revocation-root` role file (STRICT).
+def _grade_role_expiry(
+    role: dict[str, Any],
+    expires_dt: datetime,
+    max_days: int,
+    *,
+    path: Path,
+    strict: bool,
+    now: datetime | None,
+) -> None:
+    """Ceremony asserts, then (strict) the expiry graded against `now` — after
+    the asserts, so pre-ceremony material is named as such rather than as merely
+    stale. Until 2026-09-02 an expired revocation root rode the chain as verified
+    trust material (measured: expires=2019-01-01 was returned by
+    fetch_revocation_root)."""
+    # Placeholders first: an unfilled ``TBD-*`` names the ceremony that has not
+    # run more precisely than "empty signatures" does.
+    _assert_no_unfilled_placeholders(role, path, allow=not strict)
+    _assert_root_signatures_filled(role, path, allow=not strict)
+    if strict:
+        if now is None:
+            now = datetime.now(timezone.utc)
+        if expires_dt <= now:
+            raise TUFRootExpired(
+                f"{role.get('role_name')} signed.expires={role['signed'].get('expires')!r} "
+                f"is not after the verifier clock {now.isoformat()}; an expired role "
+                "document is not trust material (fail-closed)."
+            )
+        if expires_dt - now > timedelta(days=max_days):
+            raise TUFClientError(
+                f"{role.get('role_name')} signed.expires={role['signed'].get('expires')!r} "
+                f"is more than the role's own rotation_policy.max_validity_days={max_days} ahead."
+            )
 
-    Mirrors :func:`fetch_sigstore_trust_root`: at v0.3/v0.4 the consumer reads
-    the BUNDLED role file (embedded into the OCI image at compile time via
-    pyproject package-data `audit_bundle.extensions = ["_tuf_root/*.json"]`);
-    when the TUF feed-fetch path lands this routes through python-tuf against
-    the `revocation-root` role's separate metadata at
-    `manifest.vkernel.dev/revocation-root/`.
 
-    This role is SEPARATE from the C18 release role AND the sigstore-trust-root
-    role — distinct rotation cadence (re-pinned on revocation-key rotation, not
-    coupled to C18 release cuts). The root pubkey is the trust anchor for the
-    verifier-side revocation list consumed by audit_bundle/revocation.py via an
-    INJECTED resolver; the is_revoked logic stays independent of this artifact
-    (injected resolver + fixture root). This fetcher makes the embedded
-    production distribution LOAD-BEARING: a consumer can resolve the
-    revocation-root via the same pattern as the sigstore-trust-root.
+def verify_role_document_signatures(
+    role: dict[str, Any], *, role_name: str
+) -> tuple[str, ...]:
+    """Verify a signed role document's OWN 2-of-3 signatures (`revocation-root`,
+    `sigstore-trust-root`) (Ed25519 over
+    `rfc8785.dumps(signed)`, hex `sig`). Returns the tuple of keyids whose
+    signatures validated, counting each DISTINCT PUBLIC KEY once — two role
+    keyids that carry the same key bytes are one signer — or raises
+    `TUFRevocationRootSignatureInvalid` when fewer keys than the role's
+    `threshold` signed.
 
-    Structural discipline: role_name == 'revocation-root', 2-of-3 threshold over
-    exactly 3 distinct Ed25519 keyids enumerated under signed.keys,
-    rotation_policy.max_validity_days <= 90, ISO-8601 expiry.
+    What this proves, exactly: that `threshold` of the keys THE DOCUMENT LISTS
+    signed the document. The key list rides the same bytes as the signatures, so
+    this is not an authority beyond whoever holds or serves the document (the
+    auditor's own file, or the release targets key on the chain); it is the
+    ceremony's approver quorum made checkable, given that holder.
 
-    Always fails closed: an empty signature set (pre-ceremony bootstrap) or any
-    ``TBD-*`` placeholder value is REJECTED with TUFBootstrapPlaceholderPresent.
-    There is NO opt-out parameter here. The deliberately-unverified bootstrap
-    variant lives in
-    ``c18_tuf_bootstrap.fetch_revocation_root_bootstrap_unverified``.
+    Why here and not in python-tuf: the document is a TARGET of the release
+    repository (authenticated as bytes by the targets role, threshold 1 in the
+    bundled root), not TUF metadata. Nothing else verifies these signatures, and a
+    role whose 2-of-3 is presence-checked only is a 1-of-1 role under the release
+    targets key. Lazy imports keep this module importable without `cryptography`.
     """
-    return _fetch_revocation_root_impl(bundled_path, allow_placeholders=False)
+    import rfc8785  # noqa: PLC0415
+    from cryptography.exceptions import InvalidSignature  # noqa: PLC0415
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import (  # noqa: PLC0415
+        Ed25519PublicKey,
+    )
+
+    signed = role.get("signed") if isinstance(role, dict) else None
+    if not isinstance(signed, dict):
+        raise TUFRevocationRootSignatureInvalid(f"{role_name} has no `signed` object")
+    roles = signed.get("roles")
+    rr = roles.get(role_name) if isinstance(roles, dict) else None
+    if not isinstance(rr, dict):
+        raise TUFRevocationRootSignatureInvalid(
+            f"{role_name} has no signed.roles[{role_name!r}] object"
+        )
+    threshold = rr.get("threshold")
+    role_keyids = rr.get("keyids")
+    keys = signed.get("keys")
+    if not isinstance(role_keyids, list) or not isinstance(keys, dict):
+        raise TUFRevocationRootSignatureInvalid(
+            f"{role_name} signed.roles[...].keyids must be a list and signed.keys an object"
+        )
+    try:
+        message = rfc8785.dumps(signed)
+    except Exception as exc:  # noqa: BLE001 — a non-canonicalisable doc is invalid
+        raise TUFRevocationRootSignatureInvalid(
+            f"{role_name} `signed` is not RFC 8785 canonicalisable: {exc}"
+        ) from exc
+    valid: list[str] = []
+    keys_counted: set[str] = set()  # lowercase hex publics that already signed
+    signatures = role.get("signatures")
+    for sig in signatures if isinstance(signatures, list) else []:
+        if not isinstance(sig, dict):
+            continue
+        keyid = sig.get("keyid")
+        sig_hex = sig.get("sig")
+        if not isinstance(keyid, str) or keyid not in role_keyids or keyid in valid:
+            continue  # only role keyids count, each label once
+        key = keys.get(keyid)
+        if not isinstance(key, dict) or not isinstance(sig_hex, str):
+            continue
+        if key.get("keytype") != "ed25519":
+            continue
+        keyval = key.get("keyval")
+        pub_hex = keyval.get("public", "") if isinstance(keyval, dict) else ""
+        if not isinstance(pub_hex, str) or pub_hex.lower() in keys_counted:
+            continue  # the SAME key under a second label is not a second signer
+        try:
+            pub = Ed25519PublicKey.from_public_bytes(bytes.fromhex(pub_hex))
+            pub.verify(bytes.fromhex(sig_hex), message)
+        except (ValueError, InvalidSignature):
+            continue
+        valid.append(keyid)
+        keys_counted.add(pub_hex.lower())
+    if not isinstance(threshold, int) or len(keys_counted) < threshold:
+        raise TUFRevocationRootSignatureInvalid(
+            f"{role_name} carries {len(keys_counted)} valid signature(s) from "
+            f"distinct role KEYS ({valid}); threshold is {threshold!r}. An "
+            "under-signed role document is not trust material (fail-closed)."
+        )
+    return tuple(valid)
+
+
+def verify_revocation_root_signatures(role: dict[str, Any]) -> tuple[str, ...]:
+    """`verify_role_document_signatures` for the `revocation-root` role."""
+    return verify_role_document_signatures(role, role_name=ROLE_REVOCATION_ROOT)
+
+
+def revocation_root_resolver_from_document(
+    role: dict[str, Any], *, source: str, verifier_now: int | None = None
+) -> tuple[Any, dict[str, str]]:
+    """Build the `revocation_root_resolver` that `audit_bundle.revocation.load_revocation_list`
+    takes, from a revocation-root role DOCUMENT — strict structural validation, then
+    the document's own 2-of-3 signatures, then the pinned list signer.
+
+    The resolver admits EXACTLY ONE `root_kid`: `signed.pinned_revocation_list_signer_fingerprint`,
+    which must name an Ed25519 key under `signed.keys` (it may be one of the three
+    root keyids or a fourth listed key). Any other kid — including the other root
+    keyids — raises, so a list signed by a key the role did not designate is refused
+    by `load_revocation_list`. Deny-by-default over the whole key map.
+
+    Returns `(resolver, provenance)`; `provenance` names the source, the signing
+    keyids that validated, the pinned signer and the expiry, for the verdict face.
+    Raises the typed `TUF*` exceptions; a caller maps them to its own refusal.
+
+    `verifier_now` (unix seconds) is the instant the document's expiry is graded
+    against — pass the same clock the revocation LIST is graded against so one
+    run has one clock. None means the wall clock.
+    """
+    now_dt = (
+        datetime.fromtimestamp(verifier_now, tz=timezone.utc)
+        if verifier_now is not None
+        else None
+    )
+    validate_revocation_root_document(role, source=source, strict=True, now=now_dt)
+    signers = verify_revocation_root_signatures(role)
+    signed = role["signed"]
+    pinned = signed.get("pinned_revocation_list_signer_fingerprint")
+    key = signed.get("keys", {}).get(pinned) if isinstance(pinned, str) else None
+    if not isinstance(key, dict) or key.get("keytype") != "ed25519":
+        raise TUFRevocationRootSignerUnpinned(
+            f"revocation-root pinned_revocation_list_signer_fingerprint={pinned!r} is "
+            "not an ed25519 key under signed.keys; no list signer is pinned."
+        )
+    try:
+        pub_raw32 = bytes.fromhex(key.get("keyval", {}).get("public", ""))
+    except ValueError as exc:
+        raise TUFRevocationRootSignerUnpinned(
+            f"pinned list signer {pinned!r} public is not hex"
+        ) from exc
+    if len(pub_raw32) != 32:
+        raise TUFRevocationRootSignerUnpinned(
+            f"pinned list signer {pinned!r} public is {len(pub_raw32)} bytes, not 32"
+        )
+
+    def resolver(root_kid: str) -> bytes:
+        if root_kid != pinned:
+            raise KeyError(
+                f"revocation list root_kid {root_kid!r} is not the pinned "
+                f"revocation-list signer {pinned!r} (deny-by-default)"
+            )
+        return pub_raw32
+
+    provenance = {
+        "source": source,
+        "signed_by": ",".join(signers),
+        "threshold": str(signed["roles"][ROLE_REVOCATION_ROOT]["threshold"]),
+        "pinned_list_signer": pinned,
+        "expires": str(signed.get("expires")),
+    }
+    return resolver, provenance
+
+
+def _fetch_revocation_root_impl(
+    bundled_path: Path | None = None,
+    *,
+    allow_placeholders: bool,
+) -> dict[str, Any]:
+    """Read the BUNDLED role file and validate it. Bootstrap module ONLY."""
+    path = bundled_path or _BUNDLED_REVOCATION_ROOT_PATH
+    if not path.is_file():
+        raise TUFClientError(
+            f"revocation-root role file missing at {path}. The OCI image build "
+            "MUST embed this at compile time (pyproject package-data)."
+        )
+    try:
+        role = strict_json_loads(path.read_text(encoding="utf-8"))
+    except ValueError as exc:
+        raise TUFClientError(
+            f"revocation-root role file at {path} is not strict JSON: {exc}"
+        ) from exc
+    return validate_revocation_root_document(
+        role, source=str(path), strict=not allow_placeholders
+    )
+
+
+def fetch_revocation_root(
+    *,
+    feed_url: str = DEFAULT_TUF_FEED_URL,
+    trust_dir: Path | None = None,
+    allow_ephemeral_trust_dir: bool = False,
+) -> dict[str, Any]:
+    """Fetch the `revocation-root` role document THROUGH THE TUF CHAIN (STRICT).
+
+    SEPARATE from the C18 release role AND the sigstore-trust-root role (its
+    own rotation cadence). The root pubkeys it carries are the trust anchor for
+    the verifier-side revocation list consumed by `audit_bundle/revocation.py`
+    via an injected resolver. Authenticated by the root-anchored chain,
+    hash-pinned, exact payload type, then `validate_revocation_root_document`
+    (strict: 2-of-3 distinct Ed25519 keyids, rotation ≤90d, ISO expiry,
+    non-empty signatures, expiry graded against now, no ``TBD-*``). No local-path
+    input. Returns the same provenance envelope as `fetch_sigstore_trust_root`.
+    """
+    fetched = _fetch_role_document(
+        ROLE_REVOCATION_ROOT,
+        feed_url=feed_url,
+        trust_dir=trust_dir,
+        allow_ephemeral_trust_dir=allow_ephemeral_trust_dir,
+        caller="fetch_revocation_root",
+    )
+    validate_revocation_root_document(
+        fetched["document"], source=ROLE_TARGET_NAMES[ROLE_REVOCATION_ROOT], strict=True
+    )
+    fetched["role_signed_by"] = verify_role_document_signatures(
+        fetched["document"], role_name=ROLE_REVOCATION_ROOT
+    )
+    return fetched
 
 
 # -----------------------------------------------------------------------------
@@ -1057,6 +1729,21 @@ def check_sth_gossip_structure(
 
 
 __all__ = [
+    "ROLE_TARGET_NAMES",
+    "ROLE_TARGET_PAYLOAD_TYPES",
+    "SIGSTORE_LOG_KEY_TYPES",
+    "SIGSTORE_TRUST_ROOT_KEY_PAYLOAD_TYPE",
+    "TUFRevocationRootSignatureInvalid",
+    "TUFRevocationRootSignerUnpinned",
+    "TUFTrustRootKeyDigestMismatch",
+    "TUFTrustRootKeyUnpinned",
+    "revocation_root_resolver_from_document",
+    "verify_revocation_root_signatures",
+    "fetch_sigstore_trust_root_key",
+    "sigstore_trust_root_key_target_name",
+    "validate_plugin_allowlist_document",
+    "validate_revocation_root_document",
+    "validate_sigstore_trust_root_document",
     "ACCEPTABLE_PAYLOAD_TYPES",
     "DEFAULT_TUF_FEED_URL",
     "MAX_ROOT_EXPIRY_DAYS",

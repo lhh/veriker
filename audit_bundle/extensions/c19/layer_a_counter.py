@@ -1298,6 +1298,7 @@ def compute_manifest_header_leaf(
                         sort_keys=True,
                         separators=(",", ":"),
                         ensure_ascii=False,
+                        allow_nan=False,
                     ).encode("utf-8")
                 ).hexdigest(),
             )
@@ -1328,6 +1329,7 @@ def compute_manifest_header_leaf(
             sort_keys=True,
             separators=(",", ":"),
             ensure_ascii=False,
+            allow_nan=False,
         ).encode("utf-8")
     ).digest()
 

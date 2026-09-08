@@ -50,8 +50,9 @@ schema; the paths are whatever the shipped bytes actually carry), rendered
     trigger it either). Whole-file (OPAQUE) claims are a separate, explicit
     DECLARATION (`opaque_claim_files`): the classifier is TOTAL over bytes
     into a closed set of kinds (SINGLE_JSON, JSONL, NOT_JSON_SHAPED,
-    JSON_SHAPED_BUT_CORRUPT: duplicate object keys; a body mixing JSON
-    object/array lines with lines that do not parse), and each declaration
+    JSON_SHAPED_BUT_CORRUPT: duplicate object keys; a NaN/Infinity token or
+    an oversized integer; a body mixing JSON object/array lines with lines
+    that do not parse), and each declaration
     admits a fixed subset (`DECLARATION_ADMITS`): structured admits the two
     JSON kinds, opaque admits ONLY NOT_JSON_SHAPED, and CORRUPT /
     JSON_OVER_DEPTH / HOLLOW are admitted by no declaration (so a producer
@@ -145,6 +146,7 @@ Stdlib + first-party only (contract clause C-2).
 from __future__ import annotations
 
 import json
+from .strict_json import StrictJSONError, strict_json_loads
 import unicodedata
 from enum import Enum
 from pathlib import Path, PurePosixPath
@@ -671,26 +673,19 @@ def validate_claimset_declaration(claimset: object) -> None:
 
 
 def _parse_refusing_duplicates(raw: bytes, what: str) -> object:
-    """json.loads with duplicate object keys refused (stdlib silently keeps
-    the last duplicate, and two parsers can then disagree about which field
-    a document carries, which is exactly the divergence this module exists
-    to prevent)."""
-
-    def _pairs(pairs: list) -> dict:
-        out: dict = {}
-        for k, v in pairs:
-            if k in out:
-                raise JsonShapedButCorrupt(
-                    f"{what}: duplicate object key {k!r} — refusing a document "
-                    "whose field set depends on parser tie-breaking"
-                )
-            out[k] = v
-        return out
-
+    """The strict parser (`audit_bundle.strict_json`) in this module's
+    vocabulary: a SEMANTIC refusal — duplicate object keys (stdlib silently
+    keeps the last, and two parsers can then disagree about which field a
+    document carries), a NaN/Infinity token, an oversized integer token — is
+    JSON-shaped-but-corrupt; a SYNTAX failure is not-JSON-shaped. Was a local
+    duplicate-key-only hook until 2026-09-05."""
     try:
-        return json.loads(raw.decode("utf-8"), object_pairs_hook=_pairs)
-    except ClaimsetError:
-        raise
+        return strict_json_loads(raw)
+    except StrictJSONError as exc:
+        raise JsonShapedButCorrupt(
+            f"{what}: {exc} — refusing a document whose meaning depends on "
+            "parser tie-breaking or on a non-JSON token"
+        ) from exc
     except (json.JSONDecodeError, UnicodeDecodeError) as exc:
         raise NotJsonShaped(f"{what}: not parseable as JSON: {exc}") from exc
 
@@ -804,7 +799,8 @@ def _refusal_for(kind: "ClaimBytesKind", where: str) -> ClaimsetError:
     """The typed refusal for a kind the current declaration does not admit."""
     if kind is ClaimBytesKind.JSON_SHAPED_BUT_CORRUPT:
         return JsonShapedButCorrupt(
-            f"{where}: JSON-shaped but corrupt (duplicate object keys; a body "
+            f"{where}: JSON-shaped but corrupt (duplicate object keys; a NaN / "
+            "Infinity token or an oversized integer; a body "
             "mixing JSON object/array lines with lines that do not parse; a "
             "BOM / non-UTF-8 encoding; or a '{'/'['-opened body that does not "
             "parse strictly) — refused under every declaration; repair the file"
@@ -931,7 +927,7 @@ def _source_statement(
         + " | "
         + _SOURCE_CONVENTIONS
         + " | declared="
-        + json.dumps(declared, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+        + json.dumps(declared, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False)
     )
 
 
@@ -1130,7 +1126,8 @@ def claimset_disclosure(
     anchor rule, stated on the line the consumer actually reads rather than
     only in a docstring."""
     breakdown = json.dumps(
-        receipt["withheld_reason_breakdown"], sort_keys=True, separators=(",", ":")
+        receipt["withheld_reason_breakdown"], sort_keys=True, separators=(",", ":"),
+        allow_nan=False,
     )
     return (
         "claimset: receipt_sha="

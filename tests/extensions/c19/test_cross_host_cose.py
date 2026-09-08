@@ -9,10 +9,19 @@ code; first-failure-wins per the C9 specific-message contract.
 
 from __future__ import annotations
 
-import cbor2
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-
 import pytest
+
+# Optional-dependency slice: SKIP cleanly when these are absent (installed by
+# `veriker[crypto]` and `veriker[c19]`) rather than failing collection. Both
+# guards must precede the imports below — including the `from cryptography ...`
+# line, which sat above them until 2026-09-03 and so still raised on a lean
+# install despite the guard being present.
+pytest.importorskip("cryptography")
+cbor2 = pytest.importorskip("cbor2")
+
+from cryptography.hazmat.primitives.asymmetric.ed25519 import (  # noqa: E402
+    Ed25519PrivateKey,
+)
 
 from audit_bundle.extensions.c19.offline_root import (
     OFFLINE_ROOT_COSE_ALG_EDDSA,

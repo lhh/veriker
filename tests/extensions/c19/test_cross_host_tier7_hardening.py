@@ -33,6 +33,10 @@ import hashlib
 
 import pytest
 
+# Optional-dependency slice: SKIP cleanly when cbor2 is absent
+# (installed by `veriker[c19]`) rather than failing collection.
+pytest.importorskip("cbor2")
+
 from audit_bundle.extensions.c19.cross_host_peerreview import (
     _CTX_ACK,
     _CTX_SENDER,

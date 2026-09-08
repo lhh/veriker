@@ -1,0 +1,9 @@
+{
+  "pins": {
+    "corner_load_pitch_residual": "corner_load_pitch_residual",
+    "corner_load_roll_residual": "corner_load_roll_residual",
+    "corner_load_transfer_split_residual": "corner_load_transfer_split_residual",
+    "corner_load_vertical_residual": "corner_load_vertical_residual"
+  },
+  "source": "corner_load_equilibrium_minimal auditor work-set: every output this bundle must deliver, each pinned to the anchored type that judges it. Committed beside the anchored spec and held by the auditor; the identity map is the policy because this pilot names each output after the channel it reports. Kept equal to auditor_entry._work_set() (derived from the spec) by a parity test."
+}

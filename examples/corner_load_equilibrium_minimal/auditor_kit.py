@@ -20,6 +20,7 @@ KIT_REGISTERS = (
     "corner_load_vertical_residual_recompute",
     "corner_load_pitch_residual_recompute",
     "corner_load_roll_residual_recompute",
+    "corner_load_transfer_split_recompute",
 )
 
 import sys  # noqa: E402
@@ -36,9 +37,11 @@ from audit_bundle.rederivation.registry import register_primitive  # noqa: E402
 from equilibrium_residual_recompute import (  # noqa: E402
     PitchResidualRecompute,
     RollResidualRecompute,
+    TransferSplitRecompute,
     VerticalResidualRecompute,
 )
 
 register_primitive(VerticalResidualRecompute())
 register_primitive(PitchResidualRecompute())
 register_primitive(RollResidualRecompute())
+register_primitive(TransferSplitRecompute())

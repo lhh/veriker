@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import enum
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from audit_bundle.iso8601 import parse_iso8601_utc_ms
 from typing import Final
 
 from audit_bundle.extensions.c19.layer_a_counter import (
@@ -187,16 +187,6 @@ def verify_pre_commit_scitt_statement(
     )
 
 
-def _parse_iso8601_utc_ms(s: str) -> int:
-    """Parse iso8601 (with 'Z' or '+00:00') into a UTC millisecond epoch int."""
-    if s.endswith("Z"):
-        s = s[:-1] + "+00:00"
-    dt = datetime.fromisoformat(s)
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return int(dt.timestamp() * 1000)
-
-
 def verify_pre_commit_predates_rotation(
     *,
     pre_commit_issuance_iso8601: str,
@@ -220,8 +210,8 @@ def verify_pre_commit_predates_rotation(
             detail=f"unknown assurance_profile {assurance_profile!r}",
         )
     min_ms, max_ms = bounds
-    pre_ms = _parse_iso8601_utc_ms(pre_commit_issuance_iso8601)
-    rot_ms = _parse_iso8601_utc_ms(rotation_at_iso8601)
+    pre_ms = parse_iso8601_utc_ms(pre_commit_issuance_iso8601)
+    rot_ms = parse_iso8601_utc_ms(rotation_at_iso8601)
     window_ms = rot_ms - pre_ms
     if window_ms <= 0:
         raise LayerAVerificationError(

@@ -2,7 +2,15 @@
 
 Wraps aigov_rederivation.py via subprocess. The same re-derivation plumbing shipped
 for span (C6), SMT (C16), and SOC 2 controls (control_rederivation), pointed at
-EU AI Act / ISO 42001 high-risk-AI obligations.
+EU AI Act / ISO 42001 high-risk-AI obligations. The wrapped pack re-derives, for every
+attestation, the verdict the verifier itself computes from the CAPTURED registry, and
+rejects the bundle if any attestation is unsigned, cites a control or test_fn the pinned
+library does not contain, binds an evidence hash that does not match the captured object,
+claims a verdict the verifier does not re-derive, or carries an observed_at that does not
+bind to the evidence object's own captured_at (OBSERVED_AT_EVIDENCE_MISMATCH /
+OBSERVED_AT_EVIDENCE_UNBOUND / OBSERVED_AT_UNPARSEABLE — the pack's module docstring
+states the honesty-rail scope of that binding; the pack and control_rederivation are
+held to the same reason-code vocabulary by tests/test_reference_pack_parity.py).
 
 Implements the audit-bundle contract §C6 (domain-agnostic re-derivation) and the §C16
 principle that the verifier — never the dispatcher/collector — sets the verdict.

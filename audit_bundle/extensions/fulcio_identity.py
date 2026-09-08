@@ -52,6 +52,7 @@ from __future__ import annotations
 import base64
 import binascii
 import datetime
+from audit_bundle.iso8601 import parse_iso8601_utc
 import hashlib
 import struct
 from dataclasses import dataclass
@@ -191,9 +192,12 @@ class FulcioTrustAnchors:
 
 
 def _parse_iso(value: str | None) -> datetime.datetime | None:
+    """Optional field: absent/empty -> None. Present -> an aware UTC instant, or
+    ValueError (caught by the fixture loader as a malformed fixture). A naive
+    value used to come back naive and raise TypeError on its first comparison."""
     if not value:
         return None
-    return datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return parse_iso8601_utc(value)
 
 
 def _embedded_scts(leaf: x509.Certificate) -> list[Any]:

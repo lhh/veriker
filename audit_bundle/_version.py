@@ -21,7 +21,7 @@ evaluation, and the offline CLI's stdlib import boundary must not widen.
 #: 0.x is the one the public README states: completed third-party audit +
 #: findings fixed + the signing ceremony. Never "1.0.0rc1" or any 1.x string
 #: while RELEASE_STATUS is "experimental".
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 
 #: One of: "experimental". No other value exists yet — adding one is a
 #: release-posture decision, not an edit.

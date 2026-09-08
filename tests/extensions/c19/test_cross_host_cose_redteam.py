@@ -25,8 +25,18 @@ EdDSA pin (D5), empty-external_aad rejection, and fail-closed COSE parsing.
 from __future__ import annotations
 
 import pytest
+
+# Optional-dependency slice: SKIP cleanly when cryptography is absent
+# (installed by `veriker[crypto]`) rather than failing collection.
+pytest.importorskip("cryptography")
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives import serialization as _ser
+
+# c19/COSE slice: bind cbor2 through importorskip so a lean install (one
+# without the `c19` extra) SKIPS this file instead of failing collection.
+# This REPLACES `import cbor2` deliberately — a guard placed after the bare
+# import never runs, because the import itself is what raises.
+cbor2 = pytest.importorskip("cbor2")
 
 from audit_bundle.extensions.c19.cross_host_peerreview import (
     CROSS_HOST_COSE_DOMAIN_AAD,
@@ -52,8 +62,6 @@ from audit_bundle.extensions.c19.layer_a_counter import (
     LayerAVerificationError,
     ReasonCode,
 )
-import cbor2
-
 _SENDER_HOST = "DE-RP"
 _RECEIVER_HOST = "be-qtsp-qes-signer"
 

@@ -7,7 +7,7 @@ Test flow:
      re_derivation_invocation + ChatLogRedactionReDerivationCheck).
   4. Assert result.ok is True on the clean bundle.
 
-Tamper tests (4 total per SKILL.md + prompt discipline):
+Tamper tests (4 total per the pilot tamper-test discipline + prompt discipline):
   tamper-transcript-byte      : edit one byte in transcript.txt WITHOUT updating
                                 manifest SHA → FileIntegrityManySmall catches it.
   tamper-policy               : modify redaction_policy.json regex + re-align SHA

@@ -7,9 +7,14 @@ so this module can be used by the stdlib-only offline tool (veriker/cli/verify.p
 
 Public surface
 --------------
-parse_strict_envelope(raw_bytes) -> StrictEnvelope
+parse_strict_envelope(raw_bytes, *, payload_type=PINNED_PAYLOAD_TYPE) -> StrictEnvelope
     Parses and strictly validates the sidecar JSON.  Raises DSSEHeaderError
-    (with a machine-readable ``code`` attribute) on any violation.
+    (with a machine-readable ``code`` attribute) on any violation.  The
+    payloadType the envelope must carry is the ``payload_type`` parameter
+    (NFC-normalized here); the default is the v0.4 pin.  Until 2026-09-06 the
+    parser compared against the module constant and ignored what its caller
+    asked for, so ``verify_envelope(payload_type=...)`` was dead for every
+    value but the pin (finding: an in-toto envelope could never verify).
 
 StrictEnvelope
     Frozen dataclass carrying validated fields; payload_bytes_b64 is the
@@ -33,7 +38,8 @@ Constraints enforced (P1c strictness)
    Any extra key is fatal (DSSE_HEADER_UNKNOWN_FIELD).
 3. Each signature object: allowed keys exactly {keyid, sig}.
    Any extra key is fatal (DSSE_HEADER_UNKNOWN_FIELD).
-4. ``payloadType`` must equal the pinned URI NFC bytewise-exact.
+4. ``payloadType`` must equal the CALLER's pin (``payload_type`` parameter; default
+   PINNED_PAYLOAD_TYPE) NFC bytewise-exact. Never a module constant alone.
 5. ``payload`` must be a non-empty base64url-no-pad string.
 6. ``signatures`` must be a non-empty list.
 7. Each ``sig`` and ``keyid`` must be decodable base64url-no-pad strings.
@@ -54,9 +60,11 @@ from dataclasses import dataclass
 from typing import Any
 
 from audit_bundle.dsse.pae import b64url_nopad_decode, payload_type_nfc
+from audit_bundle.strict_json import StrictJSONError, strict_json_loads
 
 __all__ = [
     "parse_strict_envelope",
+    "require_payload_type_param",
     "StrictEnvelope",
     "StrictSignature",
     "DSSEHeaderError",
@@ -134,7 +142,8 @@ class StrictEnvelope:
     """
 
     payload_type: str
-    """The NFC-normalized payloadType URI (equal to PINNED_PAYLOAD_TYPE)."""
+    """The NFC-normalized payloadType URI (equal to the ``payload_type`` the
+    parser was asked to pin — PINNED_PAYLOAD_TYPE unless the caller said otherwise)."""
 
     payload_bytes_b64: str
     """Base64url-no-pad encoding of the payload bytes."""
@@ -147,20 +156,6 @@ class StrictEnvelope:
 # Internal helpers.
 # ---------------------------------------------------------------------------
 
-
-def _reject_duplicates_hook(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-    """object_pairs_hook that raises on duplicate keys."""
-    seen: set[str] = set()
-    result: dict[str, Any] = {}
-    for key, value in pairs:
-        if key in seen:
-            raise DSSEHeaderError(
-                DSSE_HEADER_DUPLICATE_KEY,
-                f"Duplicate JSON key {key!r} in envelope object",
-            )
-        seen.add(key)
-        result[key] = value
-    return result
 
 
 def _require_str(value: Any, field: str) -> str:
@@ -190,13 +185,49 @@ def _validate_b64url_nopad(value: str, field: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def parse_strict_envelope(raw_bytes: bytes) -> StrictEnvelope:
+def require_payload_type_param(payload_type: object) -> str:
+    """Validate a CALLER-held payloadType pin and return its NFC form.
+
+    One guard for both ``parse_strict_envelope`` and ``verify_envelope``: the value
+    must be a non-empty ``str`` that encodes as UTF-8 (a lone surrogate such as
+    ``"\ud800"`` is a legal Python str that ``pae()`` cannot encode — found by the
+    2026-09-06 red team as an UnicodeEncodeError escaping the never-raise contract
+    AFTER producer bytes were parsed). Raises ``ValueError`` on any violation, before
+    any producer byte is read. Every string the PAE preimage sees must have passed
+    this, so the header check and the preimage cannot disagree on encodability.
+    """
+    if not isinstance(payload_type, str) or not payload_type:
+        raise ValueError(
+            "payload_type must be a non-empty str (it is verifier configuration, "
+            f"not envelope content); got {type(payload_type).__name__}"
+        )
+    nfc = payload_type_nfc(payload_type)
+    try:
+        nfc.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise ValueError(
+            f"payload_type is not UTF-8 encodable (lone surrogate?): {exc}"
+        ) from exc
+    return nfc
+
+
+def parse_strict_envelope(
+    raw_bytes: bytes,
+    *,
+    payload_type: str = PINNED_PAYLOAD_TYPE,
+) -> StrictEnvelope:
     """Parse and strictly validate a DSSE sidecar JSON document.
 
     Parameters
     ----------
     raw_bytes:
         The raw bytes of the ``bundle.dsse.json`` sidecar file.
+    payload_type:
+        The payloadType URI the envelope must carry, compared bytewise-exact
+        after NFC normalization of both sides.  Defaults to the v0.4 pin.
+        This is a CALLER-held parameter (verifier configuration), never read
+        from the envelope; an empty or non-string value is a caller bug and
+        raises ``ValueError`` before any producer byte is read.
 
     Returns
     -------
@@ -208,7 +239,12 @@ def parse_strict_envelope(raw_bytes: bytes) -> StrictEnvelope:
     DSSEHeaderError
         On any structural, key, type, or payloadType violation.
         ``err.code`` is one of the DSSE_* constants.
+    ValueError
+        If ``payload_type`` is not a non-empty, UTF-8-encodable ``str`` (caller
+        contract; not a producer-input path, so §C9 never-raise does not apply).
     """
+    expected_pt = require_payload_type_param(payload_type)
+
     # -----------------------------------------------------------------------
     # Step 1: Decode UTF-8.
     # -----------------------------------------------------------------------
@@ -221,15 +257,21 @@ def parse_strict_envelope(raw_bytes: bytes) -> StrictEnvelope:
         ) from exc
 
     # -----------------------------------------------------------------------
-    # Step 2: Parse JSON with duplicate-key detection.
-    #
-    # DSSEHeaderError raised inside the hook propagates through json.loads
-    # only if json.loads does not wrap it.  We need to re-raise cleanly.
+    # Step 2: Parse JSON strictly (audit_bundle.strict_json). A duplicate key
+    # keeps its own code; a NaN/Infinity token or an oversized integer is a
+    # malformed envelope. Was a local duplicate-key-only hook until 2026-09-05.
     # -----------------------------------------------------------------------
     try:
-        doc = json.loads(text, object_pairs_hook=_reject_duplicates_hook)
-    except DSSEHeaderError:
-        raise
+        doc = strict_json_loads(text)
+    except StrictJSONError as exc:
+        if exc.kind == "duplicate_key":
+            raise DSSEHeaderError(
+                DSSE_HEADER_DUPLICATE_KEY,
+                f"Duplicate JSON key {exc.key!r} in envelope object",
+            ) from exc
+        raise DSSEHeaderError(
+            DSSE_MALFORMED_ENVELOPE, f"Sidecar JSON is not strict JSON: {exc}"
+        ) from exc
     except json.JSONDecodeError as exc:
         raise DSSEHeaderError(
             DSSE_MALFORMED_ENVELOPE,
@@ -268,15 +310,16 @@ def parse_strict_envelope(raw_bytes: bytes) -> StrictEnvelope:
             )
 
     # -----------------------------------------------------------------------
-    # Step 6: payloadType — must be a string, NFC, bytewise-exact match.
+    # Step 6: payloadType — must be a string, NFC, bytewise-exact match
+    # against the CALLER's pin (the parameter), never a module constant.
     # -----------------------------------------------------------------------
     raw_pt = _require_str(doc["payloadType"], "payloadType")
     nfc_pt = payload_type_nfc(raw_pt)
-    if nfc_pt != PINNED_PAYLOAD_TYPE:
+    if nfc_pt != expected_pt:
         raise DSSEHeaderError(
             DSSE_PAYLOADTYPE_MISMATCH,
             f"payloadType {raw_pt!r} (NFC: {nfc_pt!r}) does not match "
-            f"pinned URI {PINNED_PAYLOAD_TYPE!r}",
+            f"pinned URI {expected_pt!r}",
         )
 
     # -----------------------------------------------------------------------

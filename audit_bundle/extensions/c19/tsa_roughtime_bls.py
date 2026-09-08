@@ -451,6 +451,13 @@ class ROUGHTIME_RADI_EXCEEDS_PROFILE_MAX(C19LayerBError):
     pass
 
 
+class ROUGHTIME_SREP_ENVELOPE_MISMATCH(C19LayerBError):
+    """The unsigned `midp_ms` / `radi_ms` envelope copy disagrees with the SIGNED
+    SREP's MIDP / RADI. The producer made two statements about one instant; the
+    verifier grades only the signed one, and a disagreeing copy is a determinate
+    finding about the producer's bytes (never silently preferred either way)."""
+
+
 class ROUGHTIME_ROOT_NOT_IN_PINNED_SET(C19LayerBError):
     pass
 
@@ -602,10 +609,11 @@ def _parse_tsa_token_payload(token: dict) -> dict:
     """Decode the v0.3 reference-implementation CMS-shape token envelope
     (cms_token_b64 holds canonical-JSON payload bytes)."""
     import base64
-    import json
+
+    from audit_bundle.strict_json import strict_json_loads
 
     payload_bytes = base64.b64decode(token["cms_token_b64"])
-    return json.loads(payload_bytes.decode("ascii"))
+    return strict_json_loads(payload_bytes.decode("ascii"))
 
 
 def _verify_tsa_token_cert_chain_and_signature(token: dict) -> None:
@@ -752,11 +760,70 @@ def _parse_srep(srep_b64: str) -> tuple[bytes, bytes, dict]:
         srep_inner_bytes = pkt["srep"]
         signature = pkt["sig"]
         srep_inner = cbor2.loads(srep_inner_bytes)
-    except (ValueError, KeyError, cbor2.CBORDecodeError) as exc:
+    except (
+        ValueError,
+        KeyError,
+        TypeError,
+        AttributeError,
+        cbor2.CBORDecodeError,
+    ) as exc:
+        # TypeError / AttributeError: packet or inner not the expected container
+        # (a list, a str, bytes where a map is required). A typed refusal, never
+        # an unattributable crash out of the plugin.
         raise ROUGHTIME_SREP_SIGNATURE_INVALID(
-            f"SREP packet parse failure: {exc}"
+            f"SREP packet parse failure: {type(exc).__name__}: {exc}"
         ) from None
-    return srep_inner_bytes, signature, srep_inner
+    if not isinstance(srep_inner_bytes, (bytes, bytearray)) or not isinstance(
+        signature, (bytes, bytearray)
+    ):
+        raise ROUGHTIME_SREP_SIGNATURE_INVALID(
+            "SREP packet srep/sig are not byte strings"
+        )
+    if not isinstance(srep_inner, dict):
+        raise ROUGHTIME_SREP_SIGNATURE_INVALID(
+            f"signed SREP inner is {type(srep_inner).__name__}, not a map"
+        )
+    return bytes(srep_inner_bytes), bytes(signature), srep_inner
+
+
+#: Sanity ceilings on the SIGNED time values: an epoch-ms beyond ~year 2255 or a
+#: radius over a day is not a time assertion the verifier can grade (a bignum
+#: MIDP would otherwise be accepted and arithmetically compared).
+_MAX_PLAUSIBLE_EPOCH_MS = 9_000_000_000_000
+_MAX_PLAUSIBLE_RADI_MS = 86_400_000
+
+
+def _signed_midp_radi(srep: dict) -> tuple[int, int]:
+    """The SIGNED SREP's (MIDP, RADI) in ms — the only time values the verifier
+    grades. Parses `srep_bytes_b64` (signature verification is `_verify_srep`'s
+    job; every caller of this helper runs after, or independently of, that check
+    and never reads the unsigned envelope copy). Raises
+    ROUGHTIME_SREP_SIGNATURE_INVALID when the inner SREP cannot be decoded or
+    its MIDP / RADI are not non-negative integers — a SREP the verifier cannot
+    grade is refused, not skipped.
+
+    Until 2026-09-02 the RADI ceiling, the pairwise fork check and the
+    convergence windows all read the unsigned `midp_ms` / `radi_ms` envelope
+    fields; the signed MIDP / RADI were decoded and never read anywhere.
+    """
+    _, _, inner = _parse_srep(srep["srep_bytes_b64"])
+    midp = inner.get("MIDP")
+    radi = inner.get("RADI")
+    if (
+        not isinstance(midp, int)
+        or isinstance(midp, bool)
+        or not isinstance(radi, int)
+        or isinstance(radi, bool)
+        or midp < 0
+        or radi < 0
+        or midp >= _MAX_PLAUSIBLE_EPOCH_MS
+        or radi >= _MAX_PLAUSIBLE_RADI_MS
+    ):
+        raise ROUGHTIME_SREP_SIGNATURE_INVALID(
+            f"signed SREP MIDP/RADI are not non-negative integers "
+            f"(MIDP={midp!r}, RADI={radi!r}); cannot be graded"
+        )
+    return midp, radi
 
 
 def _verify_srep(srep: dict, *, assurance_profile: str, expected_nonce: bytes) -> str:
@@ -795,16 +862,8 @@ def _verify_srep(srep: dict, *, assurance_profile: str, expected_nonce: bytes) -
             f"only :2003 is in service (:2002 was decommissioned)"
         )
 
-    # 3. RADI ceiling per profile.
-    radi_ms = srep["radi_ms"]
-    radi_ceiling = PROFILE_MAX_RADIUS_MS[assurance_profile]
-    if radi_ms > radi_ceiling:
-        raise ROUGHTIME_RADI_EXCEEDS_PROFILE_MAX(
-            f"SREP RADI={radi_ms}ms exceeds profile '{assurance_profile}' "
-            f"ceiling {radi_ceiling}ms"
-        )
-
-    # 4. Signature verification under the pinned pubkey.
+    # 3. Signature verification under the pinned pubkey — FIRST, so every
+    #    time-valued decision below reads bytes the pinned root signed.
     srep_inner_bytes, signature, srep_inner = _parse_srep(srep["srep_bytes_b64"])
     pinned_pk_raw = base64.b64decode(pinned_root["pubkey_b64"])
     try:
@@ -817,12 +876,32 @@ def _verify_srep(srep: dict, *, assurance_profile: str, expected_nonce: bytes) -
             f"SREP signature does not verify under pinned pubkey for '{claimed_name}'"
         ) from None
 
-    # 5. Nonce binding.
+    # 4. The signed instant. The unsigned `midp_ms` / `radi_ms` envelope copy is
+    #    optional and NEVER graded; if present it must agree with the signature,
+    #    else the producer made two statements about one instant.
+    midp_ms, radi_ms = _signed_midp_radi(srep)
+    for outer_key, signed_value in (("midp_ms", midp_ms), ("radi_ms", radi_ms)):
+        if outer_key in srep and srep[outer_key] != signed_value:
+            raise ROUGHTIME_SREP_ENVELOPE_MISMATCH(
+                f"SREP envelope {outer_key}={srep[outer_key]!r} disagrees with the "
+                f"SIGNED value {signed_value} for '{claimed_name}'; the verifier "
+                "grades the signed value only"
+            )
+
+    # 5. RADI ceiling per profile — on the SIGNED radius.
+    radi_ceiling = PROFILE_MAX_RADIUS_MS[assurance_profile]
+    if radi_ms > radi_ceiling:
+        raise ROUGHTIME_RADI_EXCEEDS_PROFILE_MAX(
+            f"SREP RADI={radi_ms}ms (signed) exceeds profile '{assurance_profile}' "
+            f"ceiling {radi_ceiling}ms"
+        )
+
+    # 6. Nonce binding.
     srep_nonce = srep_inner.get("NONC")
     if srep_nonce != expected_nonce:
         raise ROUGHTIME_NONCE_BINDING_MISMATCH(
-            f"SREP NONC does not bind to recomputed expected_nonce "
-            f"(nonce domain-separation enforced)"
+            "SREP NONC does not bind to recomputed expected_nonce "
+            "(nonce domain-separation enforced)"
         )
 
     return claimed_name
@@ -840,15 +919,16 @@ def _check_pairwise_misbehavior(sreps: list[dict]) -> None:
     Iterates ALL ordered pairs (i != j) so the violation fires regardless
     of SREP order in the bundle.
     """
-    n = len(sreps)
+    # Intervals come from the SIGNED SREPs (see `_signed_midp_radi`), never
+    # from the unsigned envelope copy.
+    signed = [_signed_midp_radi(s) for s in sreps]
+    n = len(signed)
     for i in range(n):
-        midp_i = sreps[i]["midp_ms"]
-        radi_i = sreps[i]["radi_ms"]
+        midp_i, radi_i = signed[i]
         for j in range(n):
             if i == j:
                 continue
-            midp_j = sreps[j]["midp_ms"]
-            radi_j = sreps[j]["radi_ms"]
+            midp_j, radi_j = signed[j]
             # Interval [midp_i - radi_i, midp_i + radi_i] must overlap
             # [midp_j - radi_j, midp_j + radi_j]. Check left-endpoint of
             # i against right-endpoint of j.
@@ -1023,7 +1103,8 @@ def verify_per_event_roughtime_quorum(
     Post-condition on success: returns None. On failure: raises with a
     DISTINCT error code from: ROUGHTIME_QUORUM_INSUFFICIENT,
     ROUGHTIME_FORK_DETECTED, ROUGHTIME_NONCE_BINDING_MISMATCH,
-    ROUGHTIME_RADI_EXCEEDS_PROFILE_MAX, ROUGHTIME_ROOT_NOT_IN_PINNED_SET,
+    ROUGHTIME_RADI_EXCEEDS_PROFILE_MAX, ROUGHTIME_SREP_ENVELOPE_MISMATCH,
+    ROUGHTIME_ROOT_NOT_IN_PINNED_SET,
     ROUGHTIME_SREP_SIGNATURE_INVALID, ROUGHTIME_PORT_DECOMMISSIONED.
 
     For each per-event entry: recomputes
@@ -1108,16 +1189,10 @@ def _gentime_iso_to_ms(value: object) -> int | None:
     path's concern)."""
     if not isinstance(value, str):
         return None
-    from datetime import datetime, timezone
+    from audit_bundle.iso8601 import parse_iso8601_utc_ms
 
     try:
-        t = value.strip()
-        if t.endswith("Z"):
-            t = t[:-1] + "+00:00"
-        dt = datetime.fromisoformat(t)
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return int(dt.timestamp() * 1000)
+        return parse_iso8601_utc_ms(value.strip())
     except ValueError:
         return None
 
@@ -1164,12 +1239,16 @@ def extract_trusted_time_windows(
         if not isinstance(entry, dict):
             continue
         for srep in entry.get("srep_responses", []) or []:
-            if not isinstance(srep, dict):
+            if not isinstance(srep, dict) or "srep_bytes_b64" not in srep:
                 continue
-            midp = srep.get("midp_ms")
-            radi = srep.get("radi_ms")
-            if isinstance(midp, int) and isinstance(radi, int):
-                roughtime_windows.append((midp - radi, midp + radi))
+            # The SIGNED interval, never the unsigned envelope copy. A SREP that
+            # cannot be decoded is skipped here (its own per-structure check
+            # raises the distinct code); convergence is the cross-anchor obligation.
+            try:
+                midp, radi = _signed_midp_radi(srep)
+            except C19LayerBError:
+                continue
+            roughtime_windows.append((midp - radi, midp + radi))
     return tsa_windows, roughtime_windows
 
 

@@ -426,7 +426,7 @@ def policy_fingerprint(policy: CompletenessPolicy) -> str:
         "order_edges": sorted(policy.order_edges),
         "policy_epoch": policy.policy_epoch,
     }
-    encoded = json.dumps(canonical, sort_keys=True, separators=(",", ":"))
+    encoded = json.dumps(canonical, sort_keys=True, separators=(",", ":"), allow_nan=False)
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 

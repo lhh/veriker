@@ -15,24 +15,21 @@ description = "Veriker — re-derivable verification of attested artifacts: reco
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Apache-2.0" }
-dependencies = [
-    # Signature / hashing primitives used across the verifier + substrate.
-    "cryptography>=42",
-    # RFC 8785 JSON Canonicalization Scheme — canonical bytes for hashing/signing.
-    # The substrate imports the `rfc8785` module (audit_bundle/revocation.py,
-    # emitter/pipeline.py, dsse tests); `jcs` is a different PyPI distribution and
-    # is NOT imported anywhere in the open tree.
-    "rfc8785>=0.1.4",
-    # C18 substrate verifier TUF client (audit_bundle/extensions/c18_tuf_client.py).
-    # python-tuf is the IETF + Sigstore canonical reference (MIT). The stdlib-only
-    # veriker.cli.verify does NOT import this — it loads on the network-connected
-    # substrate verify path only (two-verifier boundary).
-    "tuf>=6.0,<8",
-    # C19.C Layer B substrate: BLS draft-06 aggregation (py_ecc) + deterministic
-    # CBOR (cbor2, RFC 8949 §4.2.1) for nonce-binding preimages.
-    "py_ecc>=7",
-    "cbor2>=5.6",
-]
+# EMPTY BY CONTRACT. The README badge says "offline · stdlib-only" about the core
+# verify path, and this list is what makes that claim checkable rather than
+# aspirational: `pip install veriker` installs veriker and nothing else, so the
+# audit-time dependency set a reader can see equals the one the verifier has.
+#
+# Measured 2026-09-03 against the v0.2.0 tree: with ZERO third-party packages
+# installed, `veriker --bundle-dir` runs its full check set and returns REJECT on
+# a tampered bundle, and the large majority of the pilots under examples/
+# complete clean (45 of the 51 that ship both a builder and a verify.py, on that
+# date — a census, not something the tree recomputes; the six that do not are
+# the crypto-, solver- and torch-dependent ones). Everything below is an extra,
+# named for what it actually serves. Adding a hard dependency here re-breaks the badge — if a future change
+# needs one, move the consumer behind a lazy import instead, or say plainly in
+# the README that the core is no longer dependency-free.
+dependencies = []
 
 [project.scripts]
 # `veriker --bundle-dir ...` — the offline bundle verifier.
@@ -42,9 +39,90 @@ dependencies = [
 veriker = "veriker.cli.verify:main"
 
 [project.optional-dependencies]
+# Ed25519 verdict signing + the DSSE / Fulcio / revocation consumption paths.
+# Measured 2026-09-03, the one shipped pilot reaching it is
+# examples/caselaw_citation_gate, which verifies an Ed25519 signature over a
+# gate verdict (Ed25519 has no stdlib implementation, so the dependency is
+# real). That is a census at a date, not an invariant: nothing recomputes it,
+# and the next pilot to bind ed25519_verdict_signing changes it with nothing
+# turning red. NOTE what this extra does NOT buy:
+# no pilot in this drop ships a DSSE envelope or a Rekor anchor, and none imports
+# audit_bundle.dsse, rekor_anchor, fulcio_identity or c18_tuf_client.
+#
+# The registered `veriker` command does touch audit_bundle.dsse, and the precise
+# shape matters if you are auditing the stdlib-only boundary: veriker/cli/verify.py does
+# `from audit_bundle.dsse.pae import b64url_nopad_decode`, which executes
+# audit_bundle/dsse/__init__.py and binds seven names across .pae and
+# .version_map — all of them stdlib-only. What it does NOT reach is
+# dsse.envelope / dsse.payload / dsse.set_closure and revocation, which do carry
+# cryptography and rfc8785; verifier.py imports those lazily and an early return
+# keeps the CLI off that path. veriker/cli/verify.py carries a standing comment
+# forbidding a module-level import of the envelope/header modules.
+crypto = [
+    "cryptography>=42",
+    # RFC 8785 JSON Canonicalization Scheme — canonical bytes for hashing/signing.
+    # Consumed by audit_bundle/revocation.py and emitter/pipeline.py; `jcs` is a
+    # different PyPI distribution and is NOT imported anywhere in the open tree.
+    "rfc8785>=0.1.4",
+]
+# C19.C Layer B substrate: BLS draft-06 aggregation (py_ecc) + deterministic CBOR
+# (cbor2, RFC 8949 §4.2.1) for nonce-binding preimages. py_ecc is imported
+# lazily (tsa_roughtime_bls.py imports it inside the verify functions); cbor2 is
+# NOT — it is a module-level import in layer_a_counter.py, offline_root.py and
+# cross_host_peerreview.py, so those three are unimportable without this extra.
+# No pilot in this drop exercises the cross-host / trusted-time layer. py_ecc
+# pulls the Ethereum-2.0 stack (eth-hash, eth-typing, eth-utils, cytoolz) because
+# the BLS suite it implements is the Eth-2.0 one — which is the right suite, and
+# is also why it does not belong in a default install.
+c19 = [
+    # offline_root.py and cross_host_peerreview.py import cryptography at module
+    # level, so this extra is not self-sufficient without it — installing `c19`
+    # alone would leave those modules unimportable.
+    "veriker[crypto]",
+    "py_ecc>=7",
+    "cbor2>=5.6",
+]
+# C18 substrate verifier TUF client (audit_bundle/extensions/c18_tuf_client.py),
+# lazily imported. Two modules reach it: veriker/cli/host_digest_verify.py — the
+# network-connected host-digest path, which is NOT a registered console script
+# (see [project.scripts]: the drop ships `veriker` only) — and
+# audit_bundle/extensions/c18_tuf_bootstrap.py, which imports four private impls
+# from it at MODULE level and does ship in the drop, so it is unimportable
+# without this extra. Neither is reachable from the `veriker` command.
+#
+# python-tuf is the IETF + Sigstore canonical reference (MIT); it pulls
+# securesystemslib and urllib3,
+# and a networking dependency has no business in the default install of a
+# verifier whose core claim is that it needs no network.
+hostverify = ["tuf>=6.0,<8"]
+# Everything an integrator might want, for the reader who does not want to choose.
+all = ["veriker[crypto,c19,hostverify]"]
 dev = [
+    "veriker[all]",
     "pytest>=8",
     "hypothesis>=6",
+    # Spreadsheet writer for examples/finsheet_style_minimal's GENERATOR
+    # (_generate_set.py). The verifier never needs it — the re-derivation reads
+    # the worksheet XML directly — but without it that pilot's tests skip on the
+    # documented contributor path, which is not what "run the suite" should mean.
+    "openpyxl>=3.1",
+    # Here to keep a TEST honest, not because anything needs it to work.
+    # openpyxl picks its XML writer at import from the `openpyxl.LXML` flag —
+    # True when lxml is importable, False otherwise — and the two writers emit
+    # different worksheet bytes for the same workbook. finsheet_style_minimal
+    # pins the workbook digest, so that briefly made the pilot machine-dependent
+    # (measured 2026-09-03, openpyxl 3.1.5: 43/43 with lxml, 4 failures without).
+    # `_generate_set._canonicalize_workbook` now C14N-normalises every XML part,
+    # so the bytes are a function of the document and BOTH writers agree — the
+    # pilot no longer needs lxml to pass.
+    #
+    # What still needs it is the control:
+    # `test_generated_workbook_bytes_are_writer_independent` runs the generator
+    # twice, once with lxml blocked, and compares digests. Without lxml on the
+    # machine both arms use the same serialiser, the comparison proves nothing,
+    # and the test skips itself as vacuous rather than passing. Keeping lxml
+    # declared is what keeps that guard armed on the documented path.
+    "lxml>=5",
     # COSE primitives for the c19 cross-host extension tests
     # (tests/extensions/c19/*): pycose provides the OKP/EdDSA keys + Sign1 used
     # to build and tamper cross-host envelopes. Optional at runtime (the verifier

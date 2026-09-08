@@ -105,13 +105,13 @@ Stdlib-only (json, math, re, hashlib, fractions) — open tier.
 from __future__ import annotations
 
 import hashlib
-import json
 import math
 import re
 from fractions import Fraction
 from pathlib import Path
 
 from ...admission import admit_bytes
+from ...strict_json import strict_json_loads
 from ...plugin import ParsedInputs, RecomputedValue
 from ..registry import register_primitive
 
@@ -168,20 +168,10 @@ class _Refusal(Exception):
 # silent-ambiguity vectors the default json.loads tolerates.
 # ---------------------------------------------------------------------------
 def parse_json_bytes(data: bytes):
-    def _const(s):
-        raise ValueError(f"non-finite JSON constant {s!r}")
-
-    def _pairs(pairs):
-        d = {}
-        for k, v in pairs:
-            if k in d:
-                raise ValueError(f"duplicate object key {k!r}")
-            d[k] = v
-        return d
-
-    return json.loads(
-        data.decode("utf-8"), parse_constant=_const, object_pairs_hook=_pairs
-    )
+    """Strict parse (duplicate keys, non-finite tokens, oversized ints all
+    ValueError). Delegates to `audit_bundle.strict_json`; was a local copy
+    until 2026-09-05."""
+    return strict_json_loads(data)
 
 
 def frac(x) -> Fraction:

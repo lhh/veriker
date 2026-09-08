@@ -132,8 +132,16 @@ _STRUCTURED_SCHEMAS: dict[str, tuple[str, ...]] = {
 #                             transcendental (e.g. math.log/exp/pow) that is not
 #                             bit-identical across platforms; the scalar_epsilon
 #                             tolerance is a deliberate margin for that wobble.
+#   decimal_fixed_point_half_ulp — the compared quantity is a DECIMAL at a
+#                             declared number of places (the primitive rounds
+#                             HALF_UP and emits binary64); the tolerance is
+#                             half a unit in the last place plus float slack,
+#                             so a claim must be the re-derived rounded value
+#                             and not merely "close". Added 2026-09-02 for
+#                             sheet_query_recompute / sheet_derivation_replay
+#                             (2-dp money and multiples, epsilon 0.0051).
 _NUMERIC_MODELS: frozenset[str] = frozenset(
-    {"binary64_exact", "binary64_libm_tolerated"}
+    {"binary64_exact", "binary64_libm_tolerated", "decimal_fixed_point_half_ulp"}
 )
 
 

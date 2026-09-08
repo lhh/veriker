@@ -22,7 +22,7 @@ agree by construction.
 
 from __future__ import annotations
 
-import json
+from audit_bundle.strict_json import strict_json_loads
 from typing import Callable
 
 from .mode import ModeSignal, OutputMode
@@ -53,7 +53,7 @@ class VEPipeline:
 
         Production subclasses override to handle real model output formats.
         """
-        parsed = json.loads(raw_output)
+        parsed = strict_json_loads(raw_output)
         return parsed["segments"]
 
     def post_process(

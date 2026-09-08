@@ -53,6 +53,8 @@ import pytest
 
 from audit_bundle.verifier import BundleVerifier, _load_manifest
 
+from tests._optional_deps import requires_pycose
+
 
 # ---------------------------------------------------------------------------
 # Helpers — minimal manifest builder used by the simple propagation tests.
@@ -294,6 +296,7 @@ def _make_layer_a_plugin(
 # ---------------------------------------------------------------------------
 
 
+@requires_pycose
 def test_layer_a_plugin_passes_via_verifier_entry_on_clean_bundle(
     tmp_path, _pinned_ed25519_kid, _host_ikm, _host_id
 ):
@@ -331,6 +334,7 @@ def test_layer_a_plugin_passes_via_verifier_entry_on_clean_bundle(
     assert result.ok is True, f"unexpected failures: {result.failures}"
 
 
+@requires_pycose
 def test_layer_a_plugin_fires_on_tamper_via_verifier_entry(
     tmp_path, _pinned_ed25519_kid, _host_ikm, _host_id
 ):

@@ -89,6 +89,7 @@ def fragment_anchor_key(anchor_name: str, anchor_dict: dict) -> str:
         sort_keys=True,
         separators=(",", ":"),
         ensure_ascii=False,
+        allow_nan=False,
     )
     return "fa:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 

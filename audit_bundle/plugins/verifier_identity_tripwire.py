@@ -32,7 +32,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from audit_bundle.bundle_manifest import register_typed_check
 from audit_bundle.extensions.c18_verifier_identity import (
     REASON_BLOCK_MALFORMED,
     self_check_tripwire,
@@ -238,27 +237,3 @@ def _locate_verifier_identity(manifest: object) -> tuple[str, dict | None]:
         return VI_MALFORMED, None
 
     return VI_ABSENT, None
-
-
-def _extract_verifier_identity_block(manifest):
-    """Mirror of the helper in c18_verifier_identity.py; duplicated here to
-    avoid an extra import cycle through the plugin loader."""
-    evidence = getattr(manifest, "evidence", None)
-    if evidence is not None:
-        vi = getattr(evidence, "verifier_identity", None)
-        if isinstance(vi, dict):
-            return vi
-    if isinstance(manifest, dict):
-        evidence = manifest.get("evidence")
-        if isinstance(evidence, dict):
-            vi = evidence.get("verifier_identity")
-            if isinstance(vi, dict):
-                return vi
-    vi = getattr(manifest, "verifier_identity", None)
-    if isinstance(vi, dict):
-        return vi
-    return None
-
-
-# Register at module-import time per the existing plugin convention.
-register_typed_check("verifier_identity_tripwire")

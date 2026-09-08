@@ -26,6 +26,8 @@ Promoted recompute primitives (PRIMITIVES.md; comparator in parens):
   - prior_auth_recompute        -> exact            (examples/prior_auth_minimal; first-match-with-default decision list — Tier-3 decision-list cluster, first-match sub-family)
   - anticheat_adjudication_recompute -> exact       (examples/anticheat_adjudication_minimal; first-match-with-default, 2nd first-match member — distinct condition vocab from prior_auth — the N=2 boundary)
   - healthcare_diagnosis_recompute -> exact          (examples/healthcare_diagnosis_minimal; fire-and-collect ICD-10 code list — Tier-3 decision-list cluster, family C; collects icd10_code of every firing rule, confidence floats out of scope)
+  - sheet_query_recompute       -> scalar_epsilon / exact / set (examples/finsheet_style_minimal; Arm A: auditor-pinned sheet-query-v1 over data/workbook.xlsx, stdlib xlsx parse)
+  - sheet_derivation_replay     -> scalar_epsilon / exact / set (examples/finsheet_style_minimal; Arm B: replay of the producer's stated operands + workbook-wide operand existence)
   - auto_ubi_recompute          -> exact            (examples/auto_ubi_minimal; per-entity feature-aggregation -> rate-table tier classify — Tier-3 family D, AGGREGATION shape not decision-list; categorical tier only, float features + adjustment_pct out of scope)
 
 The remaining corpus primitives are phased over the provisional window —
@@ -60,6 +62,7 @@ from . import (  # noqa: F401
     prior_auth,
     raster,
     scrabble,
+    sheet_query,
     spectra_span,
     streaming,
     tabular,

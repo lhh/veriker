@@ -38,6 +38,11 @@ boundary as a crash-class ERROR:
                      path at all.
   STORE_INTERNAL   — a content-addressed store keyed by a CID the store
                      itself minted.
+  CONTAINMENT_RULE — `_containment.contain` itself: the join's `resolve()` is
+                     wrapped (ValueError / UnicodeEncodeError -> a typed
+                     ContainmentError, itself a ValueError) so a NUL or lone
+                     surrogate is a refusal the caller maps, never a crash;
+                     every caller is a REJECT-side boundary of its own.
 
 The dispositions are CLAIMS about where a raise is contained, written down so
 they can be falsified one at a time; the ones the manifest-key battery has
@@ -68,6 +73,12 @@ _CLASSIFIED: dict[tuple[str, str, str], str] = {
         "PLUGIN_BOUNDARY"
     ),
     ("bundle_manifest.py", "_safe_bundle_path", "bundle_dir / rel_path"): "CHOKEPOINT",
+    # `name` is one of two verifier-chosen literals ("timestamp.json" /
+    # "snapshot.json") over the verifier's OWN trust dir after ngclient wrote it;
+    # the read is inside `except OSError -> TUFClientError` (fail-closed, typed).
+    ("extensions/c18_tuf_client.py", "_metadata_expires", "metadata_dir / name"): (
+        "VERIFIER_CONST"
+    ),
     ("claimset.py", "enumerate_claim_universe", "base / rel"): "MANIFEST_KEY",
     ("emitter/pipeline.py", "_write_file", "out_dir / rel_path"): "PRODUCER_TOOLING",
     ("extensions/c9_1_append_only_files.py", "check", "bundle_dir / rel_path"): (
@@ -113,12 +124,11 @@ _CLASSIFIED: dict[tuple[str, str, str], str] = {
         "outputs_dir",
         "bundle_dir / OUTPUTS_DIRNAME",
     ): ("VERIFIER_CONST"),
-    ("rederivation/dispatch.py", "run_spec_pinned_dispatch", "bundle_dir / rel"): (
-        "AUDITOR_INPUT"
-    ),
-    ("rederivation/primitives/_safepath.py", "resolve_within", "root / rel"): (
-        "DISPATCH_PRIMITIVE"
-    ),
+    # 2026-09-05: dispatch's pinned-input join and _safepath.resolve_within now
+    # route through audit_bundle._containment.contain — the ONE containment
+    # rule (resolve, contain, lstat-classify the object). Its own join is the
+    # site below; the two former entries no longer exist as written.
+    ("_containment.py", "contain", "root / rel"): "CONTAINMENT_RULE",
     (
         "rederivation/primitives/fea_witness_cert.py",
         "_load_evidence",
@@ -153,6 +163,7 @@ _DISPOSITIONS = {
     "AUDITOR_INPUT",
     "PRODUCER_TOOLING",
     "STORE_INTERNAL",
+    "CONTAINMENT_RULE",
 }
 
 

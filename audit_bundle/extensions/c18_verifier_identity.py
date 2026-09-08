@@ -34,10 +34,10 @@ which takes JCS + crypto + python-tuf dependencies.
 
 from __future__ import annotations
 
-import hashlib
 import re
 from pathlib import Path
 from typing import Literal, TypedDict
+from audit_bundle.digest import sha256_file as _file_sha256
 
 
 # =============================================================================
@@ -436,48 +436,6 @@ def _locate_verifier_identity(manifest: object) -> tuple[str, dict | None]:
 
     return VI_ABSENT, None
 
-
-def _extract_verifier_identity_block(manifest: object) -> dict | None:
-    """Pull bundle.evidence.verifier_identity off `manifest`.
-
-    Handles both attribute-access (BundleManifest dataclass) and dict-access
-    (raw JSON bundle manifest) styles. Returns None if the block is absent
-    (a legacy / pre-C18 bundle).
-    """
-    # Attribute style. A present-but-non-dict ``verifier_identity`` must NOT
-    # short-circuit to None: callers read None as "legacy pre-C18 bundle,
-    # clean PASS", so returning it here would skip every C18 structural check
-    # on a malformed block (fail-open). Fall through to the remaining lookups
-    # instead, matching the mirrored copy in
-    # plugins/verifier_identity_tripwire.py, which the two had drifted apart on.
-    evidence = getattr(manifest, "evidence", None)
-    if evidence is not None:
-        vi = getattr(evidence, "verifier_identity", None)
-        if isinstance(vi, dict):
-            return vi
-
-    # Dict style.
-    if isinstance(manifest, dict):
-        evidence = manifest.get("evidence")
-        if isinstance(evidence, dict):
-            vi = evidence.get("verifier_identity")
-            if isinstance(vi, dict):
-                return vi
-
-    # Top-level dict-style attribute on bundle.
-    vi = getattr(manifest, "verifier_identity", None)
-    if isinstance(vi, dict):
-        return vi
-
-    return None
-
-
-def _file_sha256(path: Path) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as f:
-        for chunk in iter(lambda: f.read(65536), b""):
-            h.update(chunk)
-    return h.hexdigest()
 
 
 def _is_hex(s: str) -> bool:

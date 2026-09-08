@@ -29,6 +29,10 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+# Optional-dependency slice: SKIP cleanly when cbor2 is absent
+# (installed by `veriker[c19]`) rather than failing collection.
+pytest.importorskip("cbor2")
+
 # Import surface drives the real-impl API. ALL of these are expected to FAIL at
 # import time pre-ss19d-002..006 (rotation primitives not yet in layer_a_counter.py;
 # pre_commit_log + offline_root are stubs).
@@ -74,8 +78,11 @@ from audit_bundle.extensions.c19.offline_root import (  # noqa: F401
 
 def _fresh_eddsa_keypair(kid: bytes) -> dict:
     """Mirrors the S19a test helper at test_layer_a_counter.py line 570."""
+    pytest.importorskip("pycose")  # SCITT/COSE helper: needs veriker[dev]
     from pycose.keys import OKPKey
+    pytest.importorskip("pycose")  # SCITT/COSE helper: needs veriker[dev]
     from pycose.keys.curves import Ed25519
+    pytest.importorskip("pycose")  # SCITT/COSE helper: needs veriker[dev]
     from pycose.keys.keyparam import KpKid
 
     sk = OKPKey.generate_key(crv=Ed25519, optional_params={KpKid: kid})

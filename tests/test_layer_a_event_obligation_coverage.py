@@ -34,6 +34,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
+# Optional-dependency slice: SKIP cleanly when cbor2 is absent
+# (installed by `veriker[c19]`) rather than failing collection. This must
+# precede the imports below, which reach it directly or transitively.
+pytest.importorskip("cbor2")
+
 from audit_bundle.causal_chain_coverage import (
     LAYER_A_EVENT_OBLIGATION_TAGS,
     event_obligation_coverage,

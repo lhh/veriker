@@ -22,6 +22,10 @@ import time
 
 import pytest
 
+# Optional-dependency slice: SKIP cleanly when cryptography is absent
+# (installed by `veriker[crypto]`) rather than failing collection.
+pytest.importorskip("cryptography")
+
 from audit_bundle.gate.ed25519_verdict_signing import (
     Ed25519VerifierKey,
     sign_action_gate_verdict_ed25519,
