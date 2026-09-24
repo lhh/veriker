@@ -61,6 +61,8 @@ from pathlib import Path
 from .verdict import (
     INPUT_CARDINALITY_EXCEEDED,
     INPUT_DEPTH_EXCEEDED,
+    INPUT_FIELD_TYPE_MISMATCH,
+    INPUT_MALFORMED_JSON,
     INPUT_SIZE_EXCEEDED,
     Verdict,
 )
@@ -112,7 +114,7 @@ def admit_bytes(
     """
     if not isinstance(raw, (bytes, bytearray)):
         return Verdict.reject(
-            INPUT_SIZE_EXCEEDED,
+            INPUT_FIELD_TYPE_MISMATCH,
             f"admission expected bytes, got {type(raw).__name__}",
             check_name,
         )
@@ -264,7 +266,7 @@ def admit_json_file(
         # loader, instead of parsed last-wins (measured PASS/0 on 2026-09-04).
         raise InputInadmissible(
             Verdict.reject(
-                INPUT_SIZE_EXCEEDED, f"{path.name}: not strict JSON: {exc}", check_name
+                INPUT_MALFORMED_JSON, f"{path.name}: not strict JSON: {exc}", check_name
             )
         ) from exc
     breach = admit_obj(obj, limits, check_name=check_name)
@@ -343,7 +345,7 @@ def admit_jsonl_file(
         except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
             raise InputInadmissible(
                 Verdict.reject(
-                    INPUT_SIZE_EXCEEDED,
+                    INPUT_MALFORMED_JSON,
                     f"{path.name}: line {lineno} not strict JSON: {exc}",
                     check_name,
                 )
