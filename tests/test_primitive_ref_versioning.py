@@ -126,6 +126,7 @@ def test_non_string_refused():
 
 class _Dummy:
     primitive_id = "d1_test_dummy"
+    expects = frozenset()  # declared inputs: this primitive reads no binding param
     primitive_version = "1"
 
     def recompute(self, *a, **k):  # pragma: no cover - never invoked

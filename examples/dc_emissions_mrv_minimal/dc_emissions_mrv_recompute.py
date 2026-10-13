@@ -130,6 +130,7 @@ class DcEmissionsMrvEmbodiedRecompute:
     """Verifier-side primitive for re-deriving the total embodied carbon."""
 
     primitive_id: str = "dc_emissions_mrv_embodied_recompute"
+    expects = frozenset()  # declared inputs: this primitive reads no binding param
 
     def recompute(self, inputs, pack_section: dict):
         """Recompute total embodied carbon from inputs/embodied_carbon_inventory.json

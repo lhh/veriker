@@ -251,6 +251,7 @@ class CaselawGateKbRecompute:
     """Verifier-side primitive re-deriving the citation gate over verbatim opinions."""
 
     primitive_id: str = "caselaw_gate_kb_recompute"
+    expects = frozenset()  # declared inputs: this primitive reads no binding param
 
     def recompute(self, inputs, pack_section: dict):
         """Recompute the gate verdict from the committed corpus + assertions.

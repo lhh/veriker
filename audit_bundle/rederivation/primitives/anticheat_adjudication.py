@@ -190,6 +190,7 @@ class AnticheatAdjudicationRecompute:
     verdict list from the committed detection signals + policy."""
 
     primitive_id: str = "anticheat_adjudication_recompute"
+    expects = frozenset()  # declared inputs: this primitive reads no binding param
     primitive_shape: str = "first-match rule -> verdict + default (decision list)"
     primitive_version: str = "1"
     primitive_tier: str = "A"

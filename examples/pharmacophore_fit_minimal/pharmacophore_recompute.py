@@ -148,6 +148,7 @@ class PharmacophoreBestFitRmsdRecompute:
     recompute shape)."""
 
     primitive_id: str = "pharmacophore_best_fit_rmsd_recompute"
+    expects = frozenset()  # declared inputs: this primitive reads no binding param
 
     def recompute(self, inputs, pack_section: dict):
         from audit_bundle.plugin import RecomputedValue  # noqa: PLC0415
@@ -175,6 +176,7 @@ class PharmacophoreBestFitDistanceRecompute:
     recompute shape)."""
 
     primitive_id: str = "pharmacophore_best_fit_distance_recompute"
+    expects = frozenset()  # declared inputs: this primitive reads no binding param
 
     def recompute(self, inputs, pack_section: dict):
         from audit_bundle.plugin import RecomputedValue  # noqa: PLC0415

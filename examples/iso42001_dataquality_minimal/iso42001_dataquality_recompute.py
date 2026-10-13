@@ -161,6 +161,7 @@ class Iso42001DataQualityRecompute:
     """Verifier-side primitive; type-switches across the A.7 quality metrics."""
 
     primitive_id: str = "iso42001_dataquality_recompute"
+    expects = frozenset()  # declared inputs: this primitive reads no binding param
 
     def recompute(self, inputs, pack_section: dict):
         """Recompute the metric named by pack_section['type'] from

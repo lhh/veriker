@@ -1,5 +1,12 @@
 # tabular_minimal — Tabular SQL Aggregate Audit Bundle
 
+> **Legacy front door, not evidence.** This pilot's `verify.py` predates the anchored CLI:
+> its check runs the pilot's own re-derivation plugin against an unanchored spec; the
+> tamper demo below is the one that fails as promised. A PASS here does not show that the
+> claimed output re-derives from the committed inputs; the anchored command in the root
+> README, with the spec, primitives and work-set held outside the bundle, is. The pilot
+> stays until it is migrated.
+
 Domain pilot: deterministic GROUP BY + SUM aggregate over a committed CSV snapshot
 bundled for V-kernel audit verification (the audit-bundle contract §C5, C6, C9).
 
@@ -52,8 +59,9 @@ python -c "
 import hashlib, json, pathlib
 p = pathlib.Path('/tmp/tabular_bundle/data/sales.csv')
 content = p.read_bytes()
-# Corrupt: change first '100' occurrence in the data rows
-corrupted = content.replace(b'1,100,', b'1,999,', 1)
+# Corrupt: the first data row is 'NA,A,1,100'; change its revenue
+corrupted = content.replace(b'NA,A,1,100\n', b'NA,A,1,999\n', 1)
+assert corrupted != content
 p.write_bytes(corrupted)
 # Re-align SHA in manifest so FileIntegrity passes but re-derivation fails
 m = pathlib.Path('/tmp/tabular_bundle/manifest.json')

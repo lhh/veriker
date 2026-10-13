@@ -115,6 +115,7 @@ class ChatLogRedactionRecompute:
     """Verifier-side primitive for re-deriving the redacted-output SHA-256."""
 
     primitive_id: str = "chat_log_redaction_recompute"
+    expects = frozenset()  # declared inputs: this primitive reads no binding param
 
     def recompute(self, inputs, pack_section: dict):
         """Recompute redacted_output_sha from inputs/transcript.txt under

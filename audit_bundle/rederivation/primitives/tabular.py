@@ -152,6 +152,7 @@ class TabularRecompute:
     """Verifier-side primitive for re-deriving the result-CSV SHA-256."""
 
     primitive_id: str = "tabular_recompute"
+    expects = frozenset()  # declared inputs: this primitive reads no binding param
     primitive_shape: str = "tabular aggregation (GROUP BY + SUM/COUNT)"
     primitive_version: str = "1"
     primitive_tier: str = "A"

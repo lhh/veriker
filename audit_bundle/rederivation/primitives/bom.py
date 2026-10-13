@@ -175,6 +175,7 @@ class BomRecompute:
     """
 
     primitive_id: str = "bom_recompute"
+    expects = frozenset()  # declared inputs: this primitive reads no binding param
     primitive_shape: str = "bill-of-materials rollup"
     primitive_version: str = "1"
     primitive_tier: str = "A"

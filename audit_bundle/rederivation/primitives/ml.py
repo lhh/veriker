@@ -162,6 +162,7 @@ class MlRecompute:
     """Verifier-side primitive for re-deriving the predicted-class-index list."""
 
     primitive_id: str = "ml_recompute"
+    expects = frozenset()  # declared inputs: this primitive reads no binding param
     primitive_shape: str = "ML metric"
     primitive_version: str = "1"
     primitive_tier: str = "A"

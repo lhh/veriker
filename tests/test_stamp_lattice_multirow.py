@@ -1812,3 +1812,24 @@ def test_v14_sig_with_normal_self_describing_bindings_still_passes():
         )
         is True
     )
+
+
+# ===========================================================================
+# STAMP_UPGRADE_REASON_INVALID — emitted by the plugin (defense 2) but untested
+# until 2026-09-24 (reason-code census). The reason enum is checked BEFORE the
+# signature, so a bogus reason gets the precise code, not STAMP_UPGRADE_FORGED.
+# ===========================================================================
+
+
+def test_upgrade_reason_outside_enum_rejects(tmp_path):
+    rec = _record("INTERNAL_BENCHMARK")
+    rec["stamp_upgrade"] = {
+        "from_stamp": "INTERNAL_BENCHMARK",
+        "to_stamp": "INTERNAL_SOURCE",
+        "upgrade_reason": "because_i_said_so",
+        "discharge_obligation_sha": "",
+    }
+    result = StampLatticeCheck(recheck_key=_KEY).check(tmp_path, _Manifest(dispatch_records=(rec,)))
+    assert result.ok is False
+    assert result.reason_code == "STAMP_UPGRADE_REASON_INVALID"
+    assert "record[0]" in result.detail and "'because_i_said_so'" in result.detail

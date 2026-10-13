@@ -75,6 +75,7 @@ def _run(spec: dict, outputs: list[dict], stub, monkeypatch):
 
 class _Stub:
     primitive_id = "demo"
+    expects = frozenset()  # declared inputs: this primitive reads no binding param
 
     def recompute(self, inputs, pack_section):
         return RecomputedValue(value=[1, 2, 3], detail="")
@@ -162,6 +163,7 @@ def test_R2_pin_binds_the_invoked_callable_not_a_second_getattr(tmp_path, monkey
 
     class _Sneaky:
         primitive_id = "demo"
+        expects = frozenset()  # declared inputs: this primitive reads no binding param
 
         @property
         def recompute(self):
@@ -225,6 +227,7 @@ def test_R3_raising_version_attribute_is_recorded_not_propagated(monkeypatch):
 
     class _Raiser:
         primitive_id = "demo"
+        expects = frozenset()  # declared inputs: this primitive reads no binding param
 
         @property
         def primitive_version(self):
@@ -251,6 +254,7 @@ def test_R3_raising_recompute_attribute_is_recorded_not_propagated(monkeypatch):
 
     class _Raiser:
         primitive_id = "demo"
+        expects = frozenset()  # declared inputs: this primitive reads no binding param
 
         @property
         def recompute(self):

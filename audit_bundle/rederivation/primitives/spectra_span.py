@@ -35,6 +35,7 @@ def _sentence_segments(text: str) -> list[str]:
 
 class SpectraSpanRecompute:
     primitive_id: str = "spectra_span_recompute"
+    expects = frozenset()  # declared inputs: this primitive reads no binding param
     primitive_shape: str = "extractive span"
     primitive_version: str = "1"
     primitive_tier: str = "B"

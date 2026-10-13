@@ -91,6 +91,7 @@ class PeEngineeringSignoffRecompute:
     """Verifier-side primitive for re-deriving the ordered structural_verdict list."""
 
     primitive_id: str = "pe_engineering_signoff_recompute"
+    expects = frozenset()  # declared inputs: this primitive reads no binding param
 
     def recompute(self, inputs, pack_section: dict):
         """Recompute the ordered structural_verdict list from the committed analysis

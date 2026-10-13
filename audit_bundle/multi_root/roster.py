@@ -47,12 +47,41 @@ validation and staleness are consumer callables; the engine binds subject-match 
 expected key equal; the run nonce for reached records) and nothing else. It never
 imports a cryptography library — the consumer brings the keys.
 
+A consumer's provenance check may SAY WHY it refused: return `Refused(why)` instead of
+`False` and the row's reason carries the text, bounded (`_refusal_reason`). `Refused` is
+falsy and FINAL (no subclass can override `__bool__`), so every reader that coerces still
+reads a refusal — a coercing reader loses the reason and never admits. A bare bool keeps
+working unchanged (the generic sentence). The reason is consumer text that can embed
+producer bytes, so it reaches the face NFKC-normalised, printable-only, without the face's
+`:` delimiter, and capped (the internal design notes, SIGVALID_REASON_AUDIT.md).
+
+A consumer callable that RAISES is caught HERE, once, for every consumer (exception_escape/
+SPEC.md layer 3 — the wrap was hand-written in two consumers and missing in a third). The
+engine cannot tell a raise caused by a bad record from a raise caused by its own or the
+consumer's code, so it never disguises one as a determinate finding: the row's reason says
+which callable raised and the exception type, and `Admission.raised` carries every
+(record_id, callable, error) so the run can count them — a population whose count is not
+zero has a bug in it. The disposition is the conservative one for that callable:
+
+  validate_content, signature_valid  ->  UNUSABLE  (the outcome a determinate "malformed" /
+                                                    "provenance refused" gets; that record only)
+  fetch, subject_from                ->  UNREACHED (the verifier could not get or place it)
+  is_stale                           ->  ADMITTED, stale (contradiction only)
+
+The other records' rows are untouched by the ENGINE. `Exception` only: a `KeyboardInterrupt`
+or `SystemExit` is the operator's, not the record's — a consumer that raises one escapes, by
+design (declared). Two more declared limits, both about the CONSUMER's code rather than the
+producer's bytes: `subject_from` and `fetch` receive the live list of rows so far (a consumer
+that mutates an earlier row is trusted verifier code, not a producer); and a consumer's RETURN
+of the wrong type is a determinate row saying so, not a raise.
+
 Stdlib only; imports nothing from `verifier`.
 """
 
 from __future__ import annotations
 
 import secrets
+import unicodedata
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 
@@ -79,6 +108,8 @@ __all__ = [
     "Expected",
     "Roster",
     "Admission",
+    "Refused",
+    "REFUSAL_WHY_CAP",
     "admit",
     "admit_nothing",
     "admitted",
@@ -98,6 +129,102 @@ ROSTER_DOMAIN = "multi_root:roster"
 
 class RosterError(ValueError):
     """The roster declaration or an admission invariant failed. Fail-closed: raised."""
+
+
+#: The consumer's `why` is cut here so the whole row reason stays under a face's 200-char
+#: detail cap (join_face.DETAIL_CAP, record_roster.REASON_CAP) and is never truncated twice.
+REFUSAL_WHY_CAP = 160
+_GENERIC_SIGNATURE_REASON = "signature does not validate under the declared key"
+
+
+@dataclass(frozen=True, slots=True)
+class Refused:
+    """A consumer's provenance check refused, and says why.
+
+    Return one from `signature_valid` in place of `False`. Falsy by construction, so a
+    reader that tests truthiness (`if not signature_valid(...)`) sees a refusal whether or
+    not it knows this type; only `admit` reads `why`. `why` must be an exact `str` — a
+    consumer that hands anything else raises HERE, in its own frame (the join's enumerated
+    wrapper turns that into an admission error), never inside the engine's formatter.
+
+    FINAL: subclassing raises. Stage 5 (red team, SEVERE, 2026-09-16): a subclass that
+    overrode `__bool__` to `True` was ADMITTED by `admit`'s truthiness test before the
+    formatter's exact-type check ever ran — the docstring's "a subclass is still falsy" was
+    false. With no subclasses, "exactly a Refused" and "a Refused" coincide, and the one
+    `__bool__` in play is this one.
+    """
+
+    why: str
+
+    def __init_subclass__(cls, **kwargs):  # noqa: D105
+        raise TypeError("Refused is final: a subclass could override __bool__ and be admitted")
+
+    def __post_init__(self) -> None:
+        if type(self.why) is not str:
+            raise TypeError(f"Refused.why must be a str, got {type(self.why).__name__}")
+
+    def __bool__(self) -> bool:
+        return False
+
+
+def _bounded(text: str) -> str:
+    """Consumer/producer text made safe for a row reason: NFKC, printable-only (`?` marks a
+    scrubbed character), `:` -> `;` (the face parses `<HEAD>:<id>:<reason>`), cut at
+    `REFUSAL_WHY_CAP` with `…`. Sliced BEFORE normalisation (see `_refusal_reason`)."""
+    text = unicodedata.normalize("NFKC", text[: 4 * REFUSAL_WHY_CAP])
+    text = "".join((";" if c == ":" else c) if c.isprintable() else "?" for c in text)
+    if len(text) > REFUSAL_WHY_CAP:
+        text = text[:REFUSAL_WHY_CAP] + "…"
+    return text
+
+
+def _type_name(exc: BaseException) -> str:
+    """The exception's class name, bounded like a reason: a class is the CONSUMER's, and a
+    dynamically made one can carry `:` or a newline in `__name__` (red team 2026-09-22)."""
+    return _bounded(type(exc).__name__) or "Exception"
+
+
+def _error_text(exc: BaseException) -> str:
+    """`<Type>: <message>` for `Admission.raised`, bounded like a refusal reason. §C9: a
+    hostile `__str__` is itself a raise, so `str(exc)` is guarded; the type name is bounded."""
+    try:
+        msg = str(exc)
+    except Exception:  # noqa: BLE001 — the message is the consumer's; its failure is not a second crash
+        msg = "<unprintable message>"
+    if type(msg) is not str:
+        msg = "<unprintable message>"
+    msg = _bounded(msg)
+    name = _type_name(exc)
+    return f"{name}: {msg}" if msg else name
+
+
+def _refusal_reason(verdict: object) -> str:
+    """The row reason for a falsy `signature_valid` return.
+
+    Generic unless `verdict` is exactly a `Refused` (the class is final, so that is the
+    only shape it can have; a constructor-bypassed instance with a non-str `why` is caught
+    below). The consumer's `why` is a forgery surface (a lane's message can embed producer
+    key names), so: the text is NFKC-normalised first (a fullwidth `：` U+FF1A folds to `:`
+    under NFKC — red team, Stage 5 — so it is caught by the next rule instead of reaching a
+    downstream reader that normalises before it splits), then every non-printable
+    character becomes `?` (a scrubbed byte leaves a mark; it is not dropped), every `:`
+    becomes `;` (the face parses `<HEAD>:<id>:<reason>`; the only colon in the reason is
+    the engine's own prefix), longer than `REFUSAL_WHY_CAP` is cut with `…`, and empty is
+    no reason. Combining marks are printable and pass (cosmetic; declared). The work is
+    bounded by a slice BEFORE normalisation (NFKC shrinks at most 2:1 by composition, so
+    4×cap chars always leave more than the cap and the `…` marker is never lost). Calls
+    nothing on a consumer object: `why` is an exact-typed dataclass field, checked at
+    construction. §C9: never raises.
+    """
+    if type(verdict) is not Refused:
+        return _GENERIC_SIGNATURE_REASON
+    why = verdict.why
+    if type(why) is not str:  # a mutated instance; the constructor refused this shape
+        return _GENERIC_SIGNATURE_REASON
+    text = _bounded(why)
+    if not text:
+        return _GENERIC_SIGNATURE_REASON
+    return f"provenance refused: {text}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -251,6 +378,10 @@ class Admission:
     #: bounded property of the ARTIFACT — a REJECT — and the degradation oracle reads a
     #: could-not-conclude on a null field, where a wrong field refuses, as a softening.
     inadmissible: str | None = None
+    #: Every consumer callable that RAISED during this admission: (record_id, callable name,
+    #: "<Type>: <message>"), in roster order. The row already says so in its reason; this is
+    #: the count the run carries so a raise is never absorbed. Empty on an honest population.
+    raised: tuple = ()
 
     def __post_init__(self) -> None:
         for name in ("rows", "receipt", "withheld"):
@@ -308,7 +439,7 @@ def _row(e: Expected, root: str) -> dict:
     }
 
 
-def _seal(roster: Roster, rows: list, covered: tuple, withheld: dict, nonce: str, *, inadmissible: str | None = None) -> Admission:
+def _seal(roster: Roster, rows: list, covered: tuple, withheld: dict, nonce: str, *, inadmissible: str | None = None, raised: tuple = ()) -> Admission:
     """Receipt against the held sha, then the never-drop-a-row bijection."""
     covered_ids = [e.record_id for e in covered]
     try:
@@ -330,14 +461,14 @@ def _seal(roster: Roster, rows: list, covered: tuple, withheld: dict, nonce: str
     for r in rows:
         if r["disposition"] not in DISPOSITIONS:
             raise RosterError(f"row {r['record_id']!r} left without a disposition")
-    return Admission(rows=rows, nonce=nonce, receipt=receipt, withheld=dict(withheld), universe_sha=roster.universe_sha, inadmissible=inadmissible)
+    return Admission(rows=rows, nonce=nonce, receipt=receipt, withheld=dict(withheld), universe_sha=roster.universe_sha, inadmissible=inadmissible, raised=tuple(raised))
 
 
 def admit(
     roster: Roster,
     context: object,
     *,
-    signature_valid: Callable[[Expected, Mapping], bool],
+    signature_valid: Callable[[Expected, Mapping], "bool | Refused"],
     validate_content: Callable[[str, Mapping], str | None] | None = None,
     is_stale: Callable[[Expected, Mapping], str | None] | None = None,
     roots_enabled: Iterable[str] | None = None,
@@ -345,7 +476,8 @@ def admit(
 ) -> Admission:
     """Reach every in-play roster record and give it a disposition. Never drops a row.
 
-    signature_valid(expected, record) -> bool   the consumer's provenance check.
+    signature_valid(expected, record) -> bool | Refused   the consumer's provenance check;
+        `Refused(why)` refuses AND puts a bounded `why` on the row's reason.
     validate_content(record_id, record) -> str | None   a reason the checks cannot read
         this content (-> UNUSABLE), or None.
     is_stale(expected, record) -> str | None   a reason this admitted record is stale
@@ -357,18 +489,42 @@ def admit(
     covered, withheld = roster.in_play(roots_enabled)
     nonce = nonce if nonce is not None else secrets.token_hex(8)
     rows: list = []
+    raised: list = []
+
+    def _raised(row: dict, e: Expected, which: str, exc: Exception, **updates) -> None:
+        # The one place a consumer callable's exception becomes a row. Never a determinate
+        # finding's sentence: the reason names the callable and the (bounded) type.
+        raised.append((e.record_id, which, _error_text(exc)))
+        row.update(reason=f"{which} raised: {_type_name(exc)}", **updates)
+
     for e in covered:
         row = _row(e, roster.root_of(e.record_id))
         expected_subject = dict(e.subject)
         if e.reached:
             expected_subject["nonce"] = nonce
-        derived = e.subject_from(rows) if e.subject_from is not None else {}
+        try:
+            derived = e.subject_from(rows) if e.subject_from is not None else {}
+        except Exception as exc:  # noqa: BLE001 — layer 3: the verifier could not PLACE the record
+            _raised(row, e, "subject_from", exc, disposition=UNREACHED)
+            rows.append(row)
+            continue
         if derived is None:
             row.update(disposition=UNREACHED, reason="subject not derivable: the record it depends on was not admitted")
             rows.append(row)
             continue
+        if not isinstance(derived, Mapping):
+            # the consumer's return, not its raise: still never our crash (red team 2026-09-22:
+            # `update(5)` raised TypeError out of admit, one line below the wrap)
+            row.update(disposition=UNREACHED, reason=f"subject_from returned {type(derived).__name__}, not a mapping")
+            rows.append(row)
+            continue
         expected_subject.update(derived)
-        rec = e.fetch(context, nonce, rows)
+        try:
+            rec = e.fetch(context, nonce, rows)
+        except Exception as exc:  # noqa: BLE001 — layer 3: the verifier could not GET the record
+            _raised(row, e, "fetch", exc, disposition=UNREACHED)
+            rows.append(row)
+            continue
         if rec is not None:
             try:
                 rec = _plain_deep(rec)
@@ -383,11 +539,23 @@ def admit(
             # (`propositions.overall`: `undelivered_attachments` -> REFUSE). Same
             # disposition, different reason, different consequence.
             row.update(disposition=UNREACHED, reason="no response" if e.reached else "not attached to the artifact")
-        elif type(rec) is not dict:
+            rows.append(row)
+            continue
+        if type(rec) is not dict:
             row.update(disposition=UNUSABLE, reason=f"record is not an object: {type(rec).__name__}")
-        elif not signature_valid(e, rec):
-            row.update(disposition=UNUSABLE, reason="signature does not validate under the declared key")
-        elif not _subject_matches(expected_subject, rec.get("subject")):
+            rows.append(row)
+            continue
+        try:
+            provenance = signature_valid(e, rec)
+        except Exception as exc:  # noqa: BLE001 — layer 3: provenance not established, that record only
+            _raised(row, e, "signature_valid", exc, disposition=UNUSABLE)
+            rows.append(row)
+            continue
+        if not provenance:
+            row.update(disposition=UNUSABLE, reason=_refusal_reason(provenance))
+            rows.append(row)
+            continue
+        if not _subject_matches(expected_subject, rec.get("subject")):
             actual = rec.get("subject")
             got = {k: v for k, v in actual.items() if k != "nonce"} if type(actual) is dict else actual
             want = {k: v for k, v in expected_subject.items() if k != "nonce"}
@@ -396,14 +564,38 @@ def admit(
                 disposition=UNUSABLE,
                 reason=(f"record is about {got!r}, not {want!r}" if nonce_ok else "record does not carry this run's nonce (replay)"),
             )
-        elif validate_content is not None and (problem := validate_content(e.record_id, rec)) is not None:
-            row.update(disposition=UNUSABLE, reason=f"malformed content: {problem}")
-        elif is_stale is not None and (why := is_stale(e, rec)) is not None:
-            row.update(disposition=ADMITTED, stale=True, record=rec, reason=f"stale: {why}; admitted for contradiction only")
-        else:
-            row.update(disposition=ADMITTED, reason="ok", record=rec)
+            rows.append(row)
+            continue
+        if validate_content is not None:
+            try:
+                problem = validate_content(e.record_id, rec)
+            except Exception as exc:  # noqa: BLE001 — layer 3: content not readable, that record only
+                _raised(row, e, "validate_content", exc, disposition=UNUSABLE)
+                rows.append(row)
+                continue
+            if problem is not None:
+                if type(problem) is not str:  # a hostile __str__ on the return would raise in the f-string
+                    problem = f"validate_content returned {type(problem).__name__}, not a str"
+                row.update(disposition=UNUSABLE, reason=f"malformed content: {problem}")
+                rows.append(row)
+                continue
+        if is_stale is not None:
+            try:
+                why = is_stale(e, rec)
+            except Exception as exc:  # noqa: BLE001 — layer 3: the conservative side is stale
+                _raised(row, e, "is_stale", exc, disposition=ADMITTED, stale=True, record=rec)
+                row["reason"] = f"stale: {row['reason']}; admitted for contradiction only"
+                rows.append(row)
+                continue
+            if why is not None:
+                if type(why) is not str:
+                    why = f"is_stale returned {type(why).__name__}, not a str"
+                row.update(disposition=ADMITTED, stale=True, record=rec, reason=f"stale: {why}; admitted for contradiction only")
+                rows.append(row)
+                continue
+        row.update(disposition=ADMITTED, reason="ok", record=rec)
         rows.append(row)
-    return _seal(roster, rows, covered, withheld, nonce)
+    return _seal(roster, rows, covered, withheld, nonce, raised=tuple(raised))
 
 
 def admit_nothing(roster: Roster, reason: str, *, roots_enabled: Iterable[str] | None = None, inadmissible: bool = True) -> Admission:

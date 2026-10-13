@@ -47,6 +47,13 @@ _build_mod = _import_from_path(
 )
 # By NAME, so this is the same module object auditor_kit.py registers from.
 import equilibrium_residual_recompute as _resid  # noqa: E402
+
+# The auditor's declared inputs as its committed spec states them (the declared-inputs
+# contract): the digest, the split table and the two floors are spec params now,
+# not constants of the primitive module.
+_SPEC_FILE = _PILOT_DIR / "spec_pinned" / "corner_load_equilibrium.spec.json"
+_PINS = _resid.pins_from_spec(_SPEC_FILE, _resid.VERTICAL)
+_SPLIT_PINS = _resid.pins_from_spec(_SPEC_FILE, _resid.SPLIT)
 import hard_negatives as _mining  # noqa: E402
 
 
@@ -126,8 +133,8 @@ def test_faulted_primitive_turns_the_clean_bundle_red(
 
     real = _resid.max_abs_residual
 
-    def faulted(bundle_dir, channel, stats=None):
-        worst, index = real(bundle_dir, channel, stats)
+    def faulted(bundle_dir, channel, stats=None, *, pins):
+        worst, index = real(bundle_dir, channel, stats, pins=pins)
         return worst + Fraction(1000), index
 
     monkeypatch.setattr(_resid, "max_abs_residual", faulted)
@@ -317,7 +324,7 @@ def test_auditor_never_reads_the_suspension_model(clean_bundle: Path) -> None:
     )
     # The residual computation itself must still run to completion.
     for channel in (_resid.VERTICAL, _resid.PITCH, _resid.ROLL):
-        worst, _ = _resid.max_abs_residual(bundle, channel)
+        worst, _ = _resid.max_abs_residual(bundle, channel, pins=_PINS)
         assert worst >= 0
 
 
@@ -624,7 +631,7 @@ def test_coordinated_trip_and_load_forgery_is_refused(clean_bundle: Path, tmp_pa
         json.dumps([dict(s, ax_mps2=dec(ax), ay_mps2=dec(ay)) for s in samples], indent=2)
     )
 
-    vehicle_sha = _resid.TRUSTED_RIGID_BODY_SPEC_SHA256
+    vehicle_sha = _PINS["rigid_body_sha256"]
     assert vehicle_sha == _resid._rigid_body_digest(
         json.loads((bundle / "inputs" / "vehicle_spec.json").read_bytes())
     ), "the forgery must leave the pinned rigid-body fields untouched"
@@ -665,7 +672,7 @@ def test_a_diagonal_shift_is_refused_as_a_disagreement_not_a_vacuity(
     shutil.copytree(clean_bundle, bundle)
     _diagonal_forgery(bundle, "450")
 
-    assert _resid.gated_sample_count(bundle) > 0, (
+    assert _resid.gated_sample_count(bundle, pins=_SPLIT_PINS) > 0, (
         "fixture no longer exercises the channel: nothing cleared the transfer floor"
     )
     result = _run_verify(bundle)
@@ -882,7 +889,7 @@ def test_the_three_equilibrium_channels_are_blind_to_it(
     _republish_with_mislearned_split(bundle, "0.30")
 
     for channel in (_resid.VERTICAL, _resid.PITCH, _resid.ROLL):
-        worst, _index = _resid.max_abs_residual(bundle, channel)
+        worst, _index = _resid.max_abs_residual(bundle, channel, pins=_PINS)
         assert abs(float(worst)) < 1.0, (
             f"{channel} residual is {float(worst)} on the mis-learned bundle -- "
             "an equilibrium channel DOES see this, so the split channel is not "
@@ -942,7 +949,7 @@ def test_the_calibration_shape_is_load_bearing(clean_bundle: Path, tmp_path: Pat
         json.dumps(manifest, indent=2, sort_keys=True, ensure_ascii=False)
     )
 
-    coverage = _resid.split_coverage(bundle)
+    coverage = _resid.split_coverage(bundle, pins=_SPLIT_PINS)
     assert coverage["above_envelope"] == 0, coverage
     assert coverage["gated"] == coverage["total"], coverage
 
@@ -1075,7 +1082,7 @@ def test_a_single_gated_sample_is_not_coverage(clean_bundle: Path, tmp_path: Pat
     shutil.copytree(clean_bundle, bundle)
     _forge_out_of_envelope(bundle, 119)
 
-    gated = _resid.gated_sample_count(bundle)
+    gated = _resid.gated_sample_count(bundle, pins=_SPLIT_PINS)
     total = len(json.loads((bundle / "inputs" / "trip_samples.json").read_bytes()))
     assert gated <= 1, f"fixture no longer starves the channel: gated={gated}"
     result = _run_verify(bundle)
@@ -1151,7 +1158,7 @@ def test_out_of_envelope_refusal_is_isolated_from_the_coverage_floor(
     shutil.copytree(clean_bundle, bundle)
     _forge_out_of_envelope(bundle, 30)
 
-    coverage = _resid.split_coverage(bundle)
+    coverage = _resid.split_coverage(bundle, pins=_SPLIT_PINS)
     assert coverage["above_envelope"] == 30, coverage
     assert coverage["gated"] * 2 >= coverage["total"], (
         f"fixture starves coverage too, so it does not isolate the guard: {coverage}"
@@ -1225,7 +1232,7 @@ def test_coverage_floor_is_isolated_from_the_envelope_refusal(
         json.dumps(manifest, indent=2, sort_keys=True, ensure_ascii=False)
     )
 
-    coverage = _resid.split_coverage(bundle)
+    coverage = _resid.split_coverage(bundle, pins=_SPLIT_PINS)
     assert coverage["above_envelope"] == 0, (
         f"fixture leaves the envelope, so it does not isolate the guard: {coverage}"
     )
@@ -1358,3 +1365,146 @@ def test_the_split_coverage_reaches_the_terminal_through_the_cli(
     assert "split_coverage" not in result.stdout, (
         "the hand-printed line is back; the CLI's recompute_detail row is the channel"
     )
+
+
+# --------------------------------------------------------------------------
+# Declared inputs (the declared-inputs contract): the split channel's coverage
+# floor, its transfer floor, its calibration table and the rigid-body digest are
+# the AUDITOR's spec params. Omitting one is a malformed instruction, never a
+# silent default the primitive fills in.
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("dropped", sorted(_resid.SPLIT_EXPECTS))
+def test_each_split_input_must_be_stated(clean_bundle: Path, tmp_path, dropped) -> None:
+    import shutil
+
+    from audit_bundle.plugins.file_integrity_many_small import FileIntegrityManySmall
+    from audit_bundle.rederivation.spec_binding import SpecAnchor
+    from audit_bundle.verdict import VerdictState
+    from audit_bundle.rederivation.registry import register_primitive
+    from audit_bundle.verifier import BundleVerifier
+
+    # Self-sufficient under -k: register the kit's four primitives (idempotent).
+    for cls in (
+        _resid.VerticalResidualRecompute,
+        _resid.PitchResidualRecompute,
+        _resid.RollResidualRecompute,
+        _resid.TransferSplitRecompute,
+    ):
+        register_primitive(cls())
+
+    doc = json.loads(_SPEC_FILE.read_bytes())
+    doc["types"][_resid.SPLIT]["comparator"]["params"].pop(dropped)
+    spec_bytes = (json.dumps(doc, indent=2) + "\n").encode("utf-8")
+    bundle = tmp_path / "b"
+    shutil.copytree(clean_bundle, bundle)
+    (bundle / "spec" / _SPEC_FILE.name).write_bytes(spec_bytes)
+    manifest = json.loads((bundle / "manifest.json").read_bytes())
+    manifest["spec_files"][_SPEC_FILE.name] = hashlib.sha256(spec_bytes).hexdigest()
+    (bundle / "manifest.json").write_text(json.dumps(manifest, indent=2))
+
+    result = BundleVerifier(
+        plugins=[FileIntegrityManySmall()],
+        spec_anchor=SpecAnchor(
+            allowed={doc["spec_id"]: hashlib.sha256(spec_bytes).hexdigest()}
+        ),
+        require_rederivation=True,
+    ).verify(bundle)
+    text = " ".join(f"{r.code} {r.detail}" for r in result.reasons)
+    assert result.state is VerdictState.ERROR, text
+    assert "MISSING_SPEC_PARAM" in text and repr(dropped) in text, text
+
+
+def test_input_anchor_on_a_corner_binding_is_unread(clean_bundle: Path, tmp_path) -> None:
+    """The band comparators VALIDATE `input_anchor` but do not read it, and the corner
+    primitives do not declare it: an anchor the auditor writes here is enforced by
+    nobody, so it is refused (UNKNOWN_SPEC_PARAM), not accepted with a wrong digest."""
+    import shutil
+
+    from audit_bundle.plugins.file_integrity_many_small import FileIntegrityManySmall
+    from audit_bundle.rederivation.registry import register_primitive
+    from audit_bundle.rederivation.spec_binding import SpecAnchor
+    from audit_bundle.verdict import VerdictState
+    from audit_bundle.verifier import BundleVerifier
+
+    for cls in (
+        _resid.VerticalResidualRecompute,
+        _resid.PitchResidualRecompute,
+        _resid.RollResidualRecompute,
+        _resid.TransferSplitRecompute,
+    ):
+        register_primitive(cls())
+    doc = json.loads(_SPEC_FILE.read_bytes())
+    for t in doc["types"].values():
+        t["comparator"]["params"]["input_anchor"] = {"vehicle_spec": "0" * 64}
+    spec_bytes = (json.dumps(doc, indent=2) + "\n").encode("utf-8")
+    bundle = tmp_path / "b"
+    shutil.copytree(clean_bundle, bundle)
+    (bundle / "spec" / _SPEC_FILE.name).write_bytes(spec_bytes)
+    manifest = json.loads((bundle / "manifest.json").read_bytes())
+    manifest["spec_files"][_SPEC_FILE.name] = hashlib.sha256(spec_bytes).hexdigest()
+    (bundle / "manifest.json").write_text(json.dumps(manifest, indent=2))
+    result = BundleVerifier(
+        plugins=[FileIntegrityManySmall()],
+        spec_anchor=SpecAnchor(
+            allowed={doc["spec_id"]: hashlib.sha256(spec_bytes).hexdigest()}
+        ),
+        require_rederivation=True,
+    ).verify(bundle)
+    text = " ".join(f"{r.code} {r.detail}" for r in result.reasons)
+    assert result.state is VerdictState.ERROR, text
+    assert "UNKNOWN_SPEC_PARAM" in text and "'input_anchor'" in text, text
+
+
+@pytest.mark.parametrize(
+    "key, bad",
+    [
+        ("rigid_body_sha256", "F" * 64),  # uppercase hex
+        ("min_gated_fraction", 0.5),  # a JSON number, not an exact string
+        ("min_transfer_n", "0"),  # not > 0
+        ("min_transfer_n", "1e50000000"),  # exponent form: would build a huge integer
+    ],
+)
+def test_a_malformed_declared_value_is_could_not_conclude(
+    clean_bundle: Path, tmp_path, key, bad
+) -> None:
+    """A malformed value the AUDITOR declared is its instruction being wrong: exit 2
+    DECLARED_INPUT_MALFORMED, never a REJECT of the bundle — and never a hang."""
+    import shutil
+    import time
+
+    from audit_bundle.plugins.file_integrity_many_small import FileIntegrityManySmall
+    from audit_bundle.rederivation.registry import register_primitive
+    from audit_bundle.rederivation.spec_binding import SpecAnchor
+    from audit_bundle.verdict import VerdictState
+    from audit_bundle.verifier import BundleVerifier
+
+    for cls in (
+        _resid.VerticalResidualRecompute,
+        _resid.PitchResidualRecompute,
+        _resid.RollResidualRecompute,
+        _resid.TransferSplitRecompute,
+    ):
+        register_primitive(cls())
+    doc = json.loads(_SPEC_FILE.read_bytes())
+    doc["types"][_resid.SPLIT]["comparator"]["params"][key] = bad
+    spec_bytes = (json.dumps(doc, indent=2) + "\n").encode("utf-8")
+    bundle = tmp_path / "b"
+    shutil.copytree(clean_bundle, bundle)
+    (bundle / "spec" / _SPEC_FILE.name).write_bytes(spec_bytes)
+    manifest = json.loads((bundle / "manifest.json").read_bytes())
+    manifest["spec_files"][_SPEC_FILE.name] = hashlib.sha256(spec_bytes).hexdigest()
+    (bundle / "manifest.json").write_text(json.dumps(manifest, indent=2))
+    start = time.monotonic()
+    result = BundleVerifier(
+        plugins=[FileIntegrityManySmall()],
+        spec_anchor=SpecAnchor(
+            allowed={doc["spec_id"]: hashlib.sha256(spec_bytes).hexdigest()}
+        ),
+        require_rederivation=True,
+    ).verify(bundle)
+    assert time.monotonic() - start < 30
+    text = " ".join(f"{r.code} {r.detail}" for r in result.reasons)
+    assert result.state is VerdictState.ERROR, text
+    assert "DECLARED_INPUT_MALFORMED" in text, text

@@ -1,5 +1,12 @@
 # healthcare_diagnosis_minimal — Clinical Diagnostic-Suggestion Audit Bundle
 
+> **Legacy front door, not evidence.** This pilot's `verify.py` predates the anchored CLI:
+> its `verify.py` runs the bundle's own `re_derive/*_pack.py`, so a bundle whose pack
+> exits 0 passes with a fabricated ICD-10 code. A PASS here does not show that the claimed
+> output re-derives from the committed inputs; the anchored command in the root README,
+> with the spec, primitives and work-set held outside the bundle, is. The pilot stays
+> until it is migrated.
+
 Minimal domain pilot: a rule-based ICD-10 diagnostic-suggestion engine bundled
 for V-Kernel audit verification (the audit-bundle contract §C5, §C6, §C9).
 

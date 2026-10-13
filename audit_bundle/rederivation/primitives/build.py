@@ -164,6 +164,7 @@ class BuildRecompute:
     """Verifier-side primitive for re-deriving the build artifact SHA-256."""
 
     primitive_id: str = "build_recompute"
+    expects = frozenset()  # declared inputs: this primitive reads no binding param
     primitive_shape: str = "build artifact digest"
     primitive_version: str = "1"
     primitive_tier: str = "A"

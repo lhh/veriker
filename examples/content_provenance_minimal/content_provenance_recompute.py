@@ -55,6 +55,7 @@ class ContentProvenanceRecompute:
     """Verifier-side primitive for re-deriving the published content SHA-256."""
 
     primitive_id: str = "content_provenance_recompute"
+    expects = frozenset()  # declared inputs: this primitive reads no binding param
 
     def recompute(self, inputs, pack_section: dict):
         """Recompute the content SHA-256 hex digest from artifact/content.txt.

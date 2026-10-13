@@ -137,6 +137,7 @@ class AudioRecompute:
     """Verifier-side primitive for re-deriving the VAD boundary-pair collection."""
 
     primitive_id: str = "audio_recompute"
+    expects = frozenset()  # declared inputs: this primitive reads no binding param
     primitive_shape: str = "audio"
     primitive_version: str = "1"
     primitive_tier: str = "B"

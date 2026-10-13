@@ -208,6 +208,7 @@ class PiiRedactionRecompute:
     """Verifier-side primitive for re-deriving the redaction-spans collection."""
 
     primitive_id: str = "pii_redaction_recompute"
+    expects = frozenset()  # declared inputs: this primitive reads no binding param
 
     def recompute(self, inputs, pack_section: dict):
         """Recompute redaction spans from the committed BIOES logits + bias vector.

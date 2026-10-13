@@ -170,6 +170,7 @@ def compute_sigma_vm_max(bundle_dir: Path) -> float:
 
 class FeaVonMisesRecompute:
     primitive_id: str = "fea_vonmises_recompute"
+    expects = frozenset()  # declared inputs: this primitive reads no binding param
     primitive_shape: str = "scalar with tolerance (FEA von-Mises)"
     primitive_version: str = "1"
     primitive_tier: str = "A"

@@ -100,6 +100,7 @@ class SecopsAlertRecompute:
     """Verifier-side primitive for re-deriving the final alert classification label."""
 
     primitive_id: str = "secops_alert_recompute"
+    expects = frozenset()  # declared inputs: this primitive reads no binding param
 
     def recompute(self, inputs, pack_section: dict):
         """Recompute the final_label from inputs/alert_log.txt (line 0) and

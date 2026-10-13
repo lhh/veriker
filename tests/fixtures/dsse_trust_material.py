@@ -27,12 +27,16 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from audit_bundle.dsse.envelope import sign_envelope
 from audit_bundle.dsse.pae import b64url_nopad_encode, kid_from_raw32
 
-#: The verifier clock every window below is minted around. Wall-relative, fixed
-#: at import: `build_dsse_context` refuses a clock more than 300 s behind the
-#: wall (a backdated clock un-revokes keys), so a constant in the past cannot
-#: drive the CLI. Windows are wide (list expires NOW + 10**6 s) so a slow run
-#: never crosses one.
-NOW = int(time.time())
+def wall_now() -> int:
+    """The verifier clock the windows below are minted around, read when called.
+
+    `build_dsse_context` refuses a clock more than 300 s behind the wall (a
+    backdated clock un-revokes keys), so a test must read the clock when it runs.
+    Until 2026-10-01 this was a constant fixed at import, which went stale whenever
+    the tests collected before this one ran long: 12 failures, by timing alone.
+    Windows are wide (the list expires now + 10**6 s), so a slow test never
+    crosses one."""
+    return int(time.time())
 
 
 def _raw(sk: Ed25519PrivateKey) -> bytes:
@@ -134,10 +138,14 @@ def signed_revocation_list(
     signer: Ed25519PrivateKey,
     *,
     revocations: list[dict[str, Any]] | None = None,
-    issued_at: int = NOW - 100,
-    expires: int = NOW + 10**6,
+    now: int | None = None,
+    issued_at: int | None = None,
+    expires: int | None = None,
     root_kid: str | None = None,
 ) -> bytes:
+    t = wall_now() if now is None else now
+    issued_at = t - 100 if issued_at is None else issued_at
+    expires = t + 10**6 if expires is None else expires
     payload = {
         "revocations": revocations or [],
         "issued_at": issued_at,
@@ -170,6 +178,7 @@ def sealed_bundle(
     *,
     schema_version: str = "vcp-v1.2-dsse",
     seal: bool = True,
+    now: int | None = None,
 ) -> None:
     """A minimal post-cutover bundle: one content file, manifest, DSSE sidecar over
     `{schema_version, manifest_sha256, iat, files}` (the emitter's payload shape)."""
@@ -195,7 +204,7 @@ def sealed_bundle(
     payload = {
         "schema_version": schema_version,
         "manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
-        "iat": NOW,
+        "iat": wall_now() if now is None else now,
         "files": [
             {"path": "corpus_entry.txt", "sha256": hashlib.sha256(content).hexdigest()}
         ],
@@ -213,6 +222,7 @@ def write_material(
     *,
     root_doc: dict[str, Any] | None = None,
     revocation_list: bytes | None = None,
+    now: int | None = None,
 ) -> dict[str, Path]:
     """Write allowlist / root / list under `out_dir` (OUTSIDE any bundle)."""
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -231,7 +241,7 @@ def write_material(
     paths["list"].write_bytes(
         revocation_list
         if revocation_list is not None
-        else signed_revocation_list(keys.list_signer)
+        else signed_revocation_list(keys.list_signer, now=now)
     )
     return paths
 

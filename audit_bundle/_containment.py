@@ -56,8 +56,8 @@ class ContainmentError(ValueError):
 def contain(root: Path, rel: str, *, require_regular: bool = True) -> Path:
     """Resolve ``rel`` under ``root`` and return the resolved path, or raise
     :class:`ContainmentError`. See the module docstring for the contract."""
-    root_resolved = root.resolve()
     try:
+        root_resolved = root.resolve()  # the root is the operator's; an unrepresentable one is still a refusal, not a crash
         candidate = (root / rel).resolve()
     except (ValueError, UnicodeEncodeError) as exc:
         # NUL byte -> ValueError; lone surrogate -> UnicodeEncodeError. Both

@@ -70,7 +70,7 @@ class VerifierIdentity(TypedDict, total=False):
       verifier_self_check_status — TRIPWIRE signal, NOT a trust assertion.
                                    Values: 'passed', 'failed', 'skipped'.
                                    An unknown value fails with
-                                   VerifierSelfCheckUnknownStatus — the verifier
+                                   VERIFIER_SELF_CHECK_UNKNOWN_STATUS — the verifier
                                    refuses to silently accept a status it does
                                    not recognize (mode-from-producer hardening).
       release_manifest_url       — where the release manifest is published
@@ -93,39 +93,6 @@ class VerifierIdentity(TypedDict, total=False):
     scitt_statement_hash: str
     sigstore_bundle_hash: str
     rekor_inclusion_proof: dict
-
-
-# =============================================================================
-# Exception classes (caught + reason-code-emitted by the tripwire plugin)
-# =============================================================================
-
-
-class VerifierIdentityError(Exception):
-    """Base class for all verifier_identity structural errors."""
-
-
-class VerifierIdentityFieldMissing(VerifierIdentityError):
-    """A required field is absent from bundle.evidence.verifier_identity."""
-
-
-class VerifierIdentityOCIDigestMalformed(VerifierIdentityError):
-    """`verifier_oci_digest` does not match the 'sha256:<64hex>' shape."""
-
-
-class VerifierIdentityRekorInclusionProofMalformed(VerifierIdentityError):
-    """`rekor_inclusion_proof` is malformed: missing required keys, wrong types,
-    or a non-hex root_hash."""
-
-
-class VerifierIdentityReleaseManifestMismatch(VerifierIdentityError):
-    """`release_manifest_hash` does not match a recomputation against the bundled
-    release_manifest.json (when the file is present)."""
-
-
-class VerifierSelfCheckUnknownStatus(VerifierIdentityError):
-    """`verifier_self_check_status` holds a value outside {'passed', 'failed', 'skipped'}.
-    Mode-from-producer hardening: the verifier refuses to silently accept a
-    status it does not recognize."""
 
 
 # =============================================================================
@@ -437,7 +404,6 @@ def _locate_verifier_identity(manifest: object) -> tuple[str, dict | None]:
     return VI_ABSENT, None
 
 
-
 def _is_hex(s: str) -> bool:
     if not isinstance(s, str) or not s:
         return False
@@ -461,12 +427,6 @@ __all__ = [
     "REASON_SELF_CHECK_UNKNOWN_STATUS",
     "TRIPWIRE_IS_NOT_TRUST_ASSERTION",
     "VerifierIdentity",
-    "VerifierIdentityError",
-    "VerifierIdentityFieldMissing",
-    "VerifierIdentityOCIDigestMalformed",
-    "VerifierIdentityRekorInclusionProofMalformed",
-    "VerifierIdentityReleaseManifestMismatch",
-    "VerifierSelfCheckUnknownStatus",
     "self_check_tripwire",
     "verify_verifier_identity_structural",
 ]

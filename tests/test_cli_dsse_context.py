@@ -41,13 +41,13 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from audit_bundle.dsse.pae import kid_from_raw32
 from tests.fixtures.dsse_trust_material import (
-    NOW,
     RevocationRootKeys,
     _keyid,
     _raw,
     revocation_root_document,
     sealed_bundle,
     signed_revocation_list,
+    wall_now,
     write_material,
 )
 
@@ -79,7 +79,7 @@ def _run(bundle_dir: Path, *args: str) -> tuple[int, dict, str, str]:
     return proc.returncode, face, proc.stdout, proc.stderr
 
 
-def _lane(paths: dict[str, Path]) -> list[str]:
+def _lane(paths: dict[str, Path], now: int) -> list[str]:
     return [
         "--dsse-allowlist",
         str(paths["allowlist"]),
@@ -88,23 +88,30 @@ def _lane(paths: dict[str, Path]) -> list[str]:
         "--dsse-revocation-root",
         str(paths["root"]),
         "--dsse-now",
-        str(NOW),
+        str(now),
     ]
 
 
 @pytest.fixture()
-def material(tmp_path):
+def now() -> int:
+    """The verifier clock for ONE test, read when the test starts (shared by
+    `material` and the lane, so the bundle, the list and `--dsse-now` agree)."""
+    return wall_now()
+
+
+@pytest.fixture()
+def material(tmp_path, now):
     keys = RevocationRootKeys.generate()
     signer = Ed25519PrivateKey.generate()
     bundle = tmp_path / "bundle"
-    sealed_bundle(bundle, signer)
-    paths = write_material(tmp_path / "trust", keys, signer)
+    sealed_bundle(bundle, signer, now=now)
+    paths = write_material(tmp_path / "trust", keys, signer, now=now)
     return keys, signer, bundle, paths
 
 
-def test_D1_sealed_bundle_with_auditor_material_reaches_exit_0(material) -> None:
+def test_D1_sealed_bundle_with_auditor_material_reaches_exit_0(material, now) -> None:
     keys, signer, bundle, paths = material
-    rc, face, out, err = _run(bundle, *_lane(paths))
+    rc, face, out, err = _run(bundle, *_lane(paths, now))
     assert rc == 0, (out, err)
     gates = {g["gate"]: g for g in face["cli_gates"]}
     assert gates["dsse_sidecar_guard"]["status"] == "DELEGATED"
@@ -112,111 +119,111 @@ def test_D1_sealed_bundle_with_auditor_material_reaches_exit_0(material) -> None
     prov = "\n".join(gates["dsse_context"]["provenance"])
     assert "pinned_list_signer=" + keys.pinned_keyid in prov
     assert "threshold=2" in prov
-    assert f"verifier_now: {NOW}" in prov
+    assert f"verifier_now: {now}" in prov
     assert "DSSE_SIGNATURE_UNCHECKED_NO_CRYPTO" not in face["reason_codes"]
     assert "Ed25519 gate delegated to verify()" in out
 
 
-def test_D2_revoked_signing_key_is_a_bundle_reject(tmp_path, material) -> None:
+def test_D2_revoked_signing_key_is_a_bundle_reject(tmp_path, material, now) -> None:
     keys, signer, bundle, paths = material
     kid = kid_from_raw32(signer.public_key().public_bytes_raw())
     paths["list"].write_bytes(
         signed_revocation_list(
-            keys.list_signer, revocations=[{"kid": kid, "not_after": NOW - 1}]
+            keys.list_signer, now=now, revocations=[{"kid": kid, "not_after": now - 1}]
         )
     )
-    rc, face, out, err = _run(bundle, *_lane(paths))
+    rc, face, out, err = _run(bundle, *_lane(paths, now))
     assert rc == 1, (out, err)
     assert "DSSE_KEY_REVOKED" in json.dumps(face)
 
 
-def test_D3_post_cutover_bundle_without_a_seal_is_refused(tmp_path, material) -> None:
+def test_D3_post_cutover_bundle_without_a_seal_is_refused(tmp_path, material, now) -> None:
     keys, signer, bundle, paths = material
     (bundle / "bundle.dsse.json").unlink()
-    rc, face, out, err = _run(bundle, *_lane(paths))
+    rc, face, out, err = _run(bundle, *_lane(paths, now))
     assert rc == 1, (out, err)
     assert "DSSE_ENVELOPE_ABSENT" in json.dumps(face)
 
 
 def test_D4_pre_cutover_bundle_is_refused_under_the_strict_lane(
-    tmp_path, material
+    tmp_path, material, now
 ) -> None:
     """Supplying trust material asks for a sealed bundle; an unsealed pre-cutover
     bundle does not satisfy the lane (require_dsse=True, allow_legacy=False)."""
     keys, signer, bundle, paths = material
     legacy = tmp_path / "legacy"
     sealed_bundle(legacy, signer, schema_version="vcp-v1.1", seal=False)
-    rc, face, out, err = _run(legacy, *_lane(paths))
+    rc, face, out, err = _run(legacy, *_lane(paths, now))
     assert rc == 1, (out, err)
     assert "SCHEMA_PRE_CUTOVER_REFUSED" in json.dumps(face)
 
 
-def test_D5_allowlist_inside_the_bundle_is_refused(material) -> None:
+def test_D5_allowlist_inside_the_bundle_is_refused(material, now) -> None:
     keys, signer, bundle, paths = material
     inside = bundle / "allowlist.json"
     inside.write_bytes(paths["allowlist"].read_bytes())
-    rc, face, out, err = _run(bundle, *_lane({**paths, "allowlist": inside}))
+    rc, face, out, err = _run(bundle, *_lane({**paths, "allowlist": inside}, now))
     assert rc == 2, (out, err)
     assert "DSSE_CONTEXT_ARG_INVALID" in face["reason_codes"]
     assert "inside the bundle" in err
 
 
-def test_D6_root_with_one_of_two_signatures_is_refused(material) -> None:
+def test_D6_root_with_one_of_two_signatures_is_refused(material, now) -> None:
     keys, signer, bundle, paths = material
     paths["root"].write_text(json.dumps(revocation_root_document(keys, sign_with=(0,))))
-    rc, face, out, err = _run(bundle, *_lane(paths))
+    rc, face, out, err = _run(bundle, *_lane(paths, now))
     assert rc == 2, (out, err)
     assert "DSSE_CONTEXT_ARG_INVALID" in face["reason_codes"]
     assert "TUFRevocationRootSignatureInvalid" in err
 
 
-def test_D6b_same_key_signing_twice_does_not_reach_threshold(material) -> None:
+def test_D6b_same_key_signing_twice_does_not_reach_threshold(material, now) -> None:
     keys, signer, bundle, paths = material
     doc = revocation_root_document(keys, sign_with=(0, 0))
     paths["root"].write_text(json.dumps(doc))
-    rc, face, out, err = _run(bundle, *_lane(paths))
+    rc, face, out, err = _run(bundle, *_lane(paths, now))
     assert rc == 2, (out, err)
     assert "TUFRevocationRootSignatureInvalid" in err
 
 
-def test_D7_expired_root_is_refused(material) -> None:
+def test_D7_expired_root_is_refused(material, now) -> None:
     keys, signer, bundle, paths = material
     paths["root"].write_text(
         json.dumps(revocation_root_document(keys, expires_in_days=-1))
     )
-    rc, face, out, err = _run(bundle, *_lane(paths))
+    rc, face, out, err = _run(bundle, *_lane(paths, now))
     assert rc == 2, (out, err)
     assert "TUFRootExpired" in err
 
 
 def test_D8_list_signed_by_a_root_key_that_is_not_the_pinned_signer_is_refused(
-    material,
+    material, now,
 ) -> None:
     """The three root keyids sign the ROLE; only the pinned signer signs LISTS."""
     keys, signer, bundle, paths = material
     paths["list"].write_bytes(signed_revocation_list(keys.root[1]))
-    rc, face, out, err = _run(bundle, *_lane(paths))
+    rc, face, out, err = _run(bundle, *_lane(paths, now))
     assert rc == 2, (out, err)
     assert "not the pinned" in err
 
 
-def test_D9_pinned_signer_absent_from_keys_is_refused(material) -> None:
+def test_D9_pinned_signer_absent_from_keys_is_refused(material, now) -> None:
     keys, signer, bundle, paths = material
     paths["root"].write_text(
         json.dumps(revocation_root_document(keys, list_pinned_signer_under_keys=False))
     )
-    rc, face, out, err = _run(bundle, *_lane(paths))
+    rc, face, out, err = _run(bundle, *_lane(paths, now))
     assert rc == 2, (out, err)
     assert "TUFRevocationRootSignerUnpinned" in err
 
 
-def test_D10_wrong_allowlist_key_is_a_bundle_reject(tmp_path, material) -> None:
+def test_D10_wrong_allowlist_key_is_a_bundle_reject(tmp_path, material, now) -> None:
     keys, signer, bundle, paths = material
     other = Ed25519PrivateKey.generate()
     from tests.fixtures.dsse_trust_material import allowlist_json
 
     paths["allowlist"].write_bytes(allowlist_json(other))
-    rc, face, out, err = _run(bundle, *_lane(paths))
+    rc, face, out, err = _run(bundle, *_lane(paths, now))
     assert rc == 1, (out, err)
     assert "DSSE_UNKNOWN_KID" in json.dumps(face)
 
@@ -262,19 +269,19 @@ def _doc(keyids, keys_map, signers, pinned):
     return out
 
 
-def test_D13_one_key_under_two_keyids_does_not_reach_threshold(material) -> None:
+def test_D13_one_key_under_two_keyids_does_not_reach_threshold(material, now) -> None:
     keys, signer, bundle, paths = material
     k_one, k_other = keys.root[0], keys.root[2]
     a, b, c = "approver-alice", "approver-bob", _keyid(k_other)
     keys_map = {a: _keyentry(k_one), b: _keyentry(k_one), c: _keyentry(k_other),
                 keys.pinned_keyid: _keyentry(keys.list_signer)}
     paths["root"].write_text(json.dumps(_doc([a, b, c], keys_map, [(a, k_one), (b, k_one)], keys.pinned_keyid)))
-    rc, face, out, err = _run(bundle, *_lane(paths))
+    rc, face, out, err = _run(bundle, *_lane(paths, now))
     assert rc == 2, (out, err)
     assert "DSSE_CONTEXT_ARG_INVALID" in face["reason_codes"]
 
 
-def test_D14_role_keyid_that_is_not_the_hash_of_its_key_is_refused(material) -> None:
+def test_D14_role_keyid_that_is_not_the_hash_of_its_key_is_refused(material, now) -> None:
     keys, signer, bundle, paths = material
     k0, k1, k2 = keys.root
     a = "approver-alice"  # a free label for a real, distinct key
@@ -282,36 +289,36 @@ def test_D14_role_keyid_that_is_not_the_hash_of_its_key_is_refused(material) -> 
                 keys.pinned_keyid: _keyentry(keys.list_signer)}
     doc = _doc([a, _keyid(k1), _keyid(k2)], keys_map, [(a, k0), (_keyid(k1), k1)], keys.pinned_keyid)
     paths["root"].write_text(json.dumps(doc))
-    rc, face, out, err = _run(bundle, *_lane(paths))
+    rc, face, out, err = _run(bundle, *_lane(paths, now))
     assert rc == 2, (out, err)
     assert "DSSE_CONTEXT_ARG_INVALID" in face["reason_codes"]
 
 
-def test_D15_backdated_verifier_clock_is_an_operator_error(material) -> None:
+def test_D15_backdated_verifier_clock_is_an_operator_error(material, now) -> None:
     keys, signer, bundle, paths = material
     wall = int(time.time())
-    lane = _lane(paths)[:-1] + [str(wall - 3600)]
+    lane = _lane(paths, now)[:-1] + [str(wall - 3600)]
     rc, face, out, err = _run(bundle, *lane)
     assert rc == 2, (out, err)
     assert "DSSE_CONTEXT_ARG_INVALID" in face["reason_codes"]
     assert "backdat" in err.lower() or "backdat" in out.lower()
 
 
-def test_D16_a_revoked_key_cannot_be_unrevoked_by_the_operator_clock(tmp_path, material) -> None:
+def test_D16_a_revoked_key_cannot_be_unrevoked_by_the_operator_clock(tmp_path, material, now) -> None:
     keys, signer, bundle, paths = material
     wall = int(time.time())
     rl = signed_revocation_list(keys.list_signer,
         revocations=[{"kid": kid_from_raw32(_raw(signer)), "not_after": wall - 1}],
         issued_at=wall - 10000, expires=wall + 10**6)
     paths = write_material(tmp_path / "trust2", keys, signer, revocation_list=rl)
-    rc, face, out, err = _run(bundle, *(_lane(paths)[:-1] + [str(wall)]))
+    rc, face, out, err = _run(bundle, *(_lane(paths, now)[:-1] + [str(wall)]))
     assert rc == 1, (out, err)
     assert "DSSE_KEY_REVOKED" in json.dumps(face)
-    rc2, face2, out2, err2 = _run(bundle, *(_lane(paths)[:-1] + [str(wall - 5000)]))
+    rc2, face2, out2, err2 = _run(bundle, *(_lane(paths, now)[:-1] + [str(wall - 5000)]))
     assert rc2 != 0, (out2, err2)
 
 
-def test_D17_a_wall_clock_stale_list_is_not_rescued_by_the_operator_clock(tmp_path, material) -> None:
+def test_D17_a_wall_clock_stale_list_is_not_rescued_by_the_operator_clock(tmp_path, material, now) -> None:
     keys, signer, bundle, paths = material
     wall = int(time.time())
     # Expired 10 days ago; the backdated clock sits 20 days back. Chosen so the
@@ -319,20 +326,20 @@ def test_D17_a_wall_clock_stale_list_is_not_rescued_by_the_operator_clock(tmp_pa
     # ONLY the backdate refusal stands between this list and exit 0.
     rl = signed_revocation_list(keys.list_signer, issued_at=wall - 100 * 86400, expires=wall - 10 * 86400)
     paths = write_material(tmp_path / "trust2", keys, signer, revocation_list=rl)
-    rc, face, out, err = _run(bundle, *_lane(paths)[:-2])  # default (wall) clock
+    rc, face, out, err = _run(bundle, *_lane(paths, now)[:-2])  # default (wall) clock
     assert rc == 1, (out, err)
     assert "DSSE_REVOCATION_LIST_STALE" in json.dumps(face)
-    rc2, face2, out2, err2 = _run(bundle, *(_lane(paths)[:-1] + [str(wall - 20 * 86400)]))
+    rc2, face2, out2, err2 = _run(bundle, *(_lane(paths, now)[:-1] + [str(wall - 20 * 86400)]))
     assert rc2 == 2, (out2, err2)
     assert "backdated" in err2 or "behind the wall clock" in err2
 
 
-def test_D18_root_expiry_is_graded_against_the_same_clock_as_the_list(material) -> None:
+def test_D18_root_expiry_is_graded_against_the_same_clock_as_the_list(material, now) -> None:
     """A forward-dated verifier clock past the root's expiry refuses the root."""
     keys, signer, bundle, paths = material
     paths["root"].write_text(json.dumps(revocation_root_document(keys, expires_in_days=2)))
     wall = int(time.time())
-    rc, face, out, err = _run(bundle, *(_lane(paths)[:-1] + [str(wall + 3 * 86400)]))
+    rc, face, out, err = _run(bundle, *(_lane(paths, now)[:-1] + [str(wall + 3 * 86400)]))
     assert rc == 2, (out, err)
     assert "TUFRootExpired" in err
 
@@ -360,13 +367,13 @@ def test_D13b_the_signature_counter_itself_counts_keys_not_labels(material) -> N
     assert len(tc.verify_revocation_root_signatures(good)) == 2
 
 
-def test_D19_tuf_trust_dir_inside_the_bundle_is_refused_before_any_fetch(material) -> None:
+def test_D19_tuf_trust_dir_inside_the_bundle_is_refused_before_any_fetch(material, now) -> None:
     """Claims lens (2026-09-02): "every path is refused inside the bundle under
     verdict" was false for `--dsse-revocation-root-tuf`: the trust DIRECTORY was
     never containment-checked, and the TUF client WRITES fetched metadata under it.
     Now it is refused before any network or file access — no feed is needed here."""
     keys, signer, bundle, paths = material
-    lane = _lane(paths)
+    lane = _lane(paths, now)
     i = lane.index("--dsse-revocation-root")
     lane[i] = "--dsse-revocation-root-tuf"
     lane[i + 1] = str(bundle / "trust")
@@ -377,14 +384,14 @@ def test_D19_tuf_trust_dir_inside_the_bundle_is_refused_before_any_fetch(materia
     assert not (bundle / "trust").exists()
 
 
-def test_D20_a_depth_bombed_revocation_list_is_a_typed_refusal(material) -> None:
+def test_D20_a_depth_bombed_revocation_list_is_a_typed_refusal(material, now) -> None:
     """Process lens (2026-09-02): with the allowlist and root reads bounded, the
     revocation LIST still went through a raw `json.loads` — a 300k-deep file was
     a RecursionError (exit 2 VERIFIER_INTERNAL_ERROR, untyped). Now the list is
     admitted through the same bounded loader first."""
     keys, signer, bundle, paths = material
     paths["list"].write_text("[" * 300_000 + "]" * 300_000)
-    rc, face, out, err = _run(bundle, *_lane(paths))
+    rc, face, out, err = _run(bundle, *_lane(paths, now))
     assert rc == 2, (out, err)
     assert "DSSE_CONTEXT_ARG_INVALID" in face["reason_codes"]
     assert "VERIFIER_INTERNAL_ERROR" not in json.dumps(face)

@@ -119,6 +119,16 @@ def encode_path(path: Iterable) -> list:
 # ---------------------------------------------------------------------------
 # The strict exact-type codec walk (validation + budgets + cycles).
 # ---------------------------------------------------------------------------
+def _safe_repr(x: Any) -> str:
+    """`repr` for an error message about a value we refuse: a hostile `__repr__` must not
+    turn the refusal into a second, undocumented exception (exception_escape layer 1)."""
+    try:
+        r = repr(x)
+    except Exception:  # noqa: BLE001 — the value's own repr failed; say so and keep refusing
+        return f"<{type(x).__name__} whose repr raised>"
+    return r if len(r) <= 200 else r[:200] + "…"
+
+
 def _walk_validate(obj: Any) -> None:
     """Fail closed on anything outside strict plain JSON or any codec-v1
     bound. Iterative; an active identity set rejects cycles instead of
@@ -177,7 +187,7 @@ def _walk_validate(obj: Any) -> None:
             for k, v in cur.items():
                 if type(k) is not str:
                     raise TotalBindingError(
-                        f"dict key {k!r} has non-str exact type "
+                        f"dict key {_safe_repr(k)} has non-str exact type "
                         f"{type(k).__name__} (str subclasses carry behavior; "
                         f"json coerces non-str keys, colliding payloads)"
                     )
@@ -202,7 +212,7 @@ def _walk_validate(obj: Any) -> None:
                 stack.append((v, depth + 1, False))
             continue
         raise TotalBindingError(
-            f"value {cur!r} of exact type {t.__name__} is not strict plain "
+            f"value {_safe_repr(cur)} of exact type {t.__name__} is not strict plain "
             f"JSON (no tuples, sets, subclasses, or objects; convert "
             f"dataclass roots via to_plain)"
         )
@@ -291,6 +301,11 @@ def strict_loads(data: "bytes | str") -> Any:
         raise
     except (UnicodeDecodeError, json.JSONDecodeError) as e:
         raise TotalBindingError(f"input is not valid JSON: {e}") from e
+    except RecursionError:
+        # nesting the stdlib parser cannot recurse into, under MAX_RAW_BYTES: refused in the
+        # documented family (exception_escape layer 1). MAX_DEPTH is still applied by the walk
+        # below on anything that parses; this arm only converts the parser's own limit.
+        raise TotalBindingError("input nests deeper than the parser can recurse into") from None
     _walk_validate(tree)
     return tree
 

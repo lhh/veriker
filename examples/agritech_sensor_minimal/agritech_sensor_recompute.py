@@ -125,6 +125,7 @@ class AgritechSensorRecompute:
     """Verifier-side primitive for re-deriving the scalar yield_score."""
 
     primitive_id: str = "agritech_sensor_recompute"
+    expects = frozenset()  # declared inputs: this primitive reads no binding param
 
     def recompute(self, inputs, pack_section: dict):
         """Recompute yield_score from inputs/sensor_stream.json + payload/fusion_weights.json.

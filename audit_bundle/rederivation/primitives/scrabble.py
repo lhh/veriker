@@ -156,6 +156,7 @@ class ScrabbleRecompute:
     """
 
     primitive_id: str = "scrabble_recompute"
+    expects = frozenset()  # declared inputs: this primitive reads no binding param
     primitive_shape: str = "scrabble dictionary adjudication (lexical membership)"
     primitive_version: str = "1"
     primitive_tier: str = "B"

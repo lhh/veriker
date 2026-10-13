@@ -817,6 +817,7 @@ class SheetQueryRecompute:
     """Arm A: recompute the answer to the AUDITOR's pinned query."""
 
     primitive_id: str = "sheet_query_recompute"
+    expects = frozenset()  # declared inputs: this primitive reads no binding param
     primitive_shape: str = "closed-world query over an .xlsx workbook (lookup / list / count / sum / mean / median / argmax / topk)"
     primitive_version: str = "1"
     primitive_tier: str = "A"
@@ -881,6 +882,7 @@ class SheetDerivationReplay:
     """Arm B: replay the PRODUCER's stated derivation against the workbook."""
 
     primitive_id: str = "sheet_derivation_replay"
+    expects = frozenset()  # declared inputs: this primitive reads no binding param
     primitive_shape: str = "replay of a producer-stated operation over stated operands, with operand-existence check against the workbook"
     primitive_version: str = "1"
     primitive_tier: str = "A"

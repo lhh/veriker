@@ -30,10 +30,10 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey 
 from audit_bundle.extensions import c18_tuf_client as tc  # noqa: E402
 from tests.c18.test_c18_tuf_protocol import _role_targets, role_docs  # noqa: E402
 from tests.fixtures.dsse_trust_material import (  # noqa: E402
-    NOW,
     RevocationRootKeys,
     revocation_root_document,
     sealed_bundle,
+    wall_now,
     write_material,
 )
 from tests.fixtures.tuf_toy_repo import GOOD_IMAGE_DIGEST, ToyTUFRepo, serve  # noqa: E402
@@ -56,7 +56,7 @@ def _serve_with_root(tmp_path: Path, root_doc: dict):
     return root_path, base, httpd
 
 
-def _run(tmp_path: Path, bundle: Path, paths, base: str, root_path: Path):
+def _run(tmp_path: Path, bundle: Path, paths, base: str, root_path: Path, now: int):
     face_path = tmp_path / "face.json"
     env = dict(
         os.environ,
@@ -91,7 +91,7 @@ def _run(tmp_path: Path, bundle: Path, paths, base: str, root_path: Path):
             "--dsse-tuf-feed-url",
             base,
             "--dsse-now",
-            str(NOW),
+            str(now),
         ],
         capture_output=True,
         text=True,
@@ -105,22 +105,29 @@ def _run(tmp_path: Path, bundle: Path, paths, base: str, root_path: Path):
 
 
 @pytest.fixture()
-def material(tmp_path):
+def now() -> int:
+    """The verifier clock for ONE test, read when the test starts (shared by
+    `material` and the lane, so the bundle, the list and `--dsse-now` agree)."""
+    return wall_now()
+
+
+@pytest.fixture()
+def material(tmp_path, now):
     keys = RevocationRootKeys.generate()
     signer = Ed25519PrivateKey.generate()
     bundle = tmp_path / "bundle"
-    sealed_bundle(bundle, signer)
-    paths = write_material(tmp_path / "trust", keys, signer)
+    sealed_bundle(bundle, signer, now=now)
+    paths = write_material(tmp_path / "trust", keys, signer, now=now)
     return keys, signer, bundle, paths
 
 
 def test_T1_chain_fetched_root_feeds_the_resolver_and_the_lane_passes(
-    tmp_path, material
+    tmp_path, material, now
 ) -> None:
     keys, signer, bundle, paths = material
     root_path, base, httpd = _serve_with_root(tmp_path, revocation_root_document(keys))
     try:
-        rc, face, out, err = _run(tmp_path, bundle, paths, base, root_path)
+        rc, face, out, err = _run(tmp_path, bundle, paths, base, root_path, now)
     finally:
         httpd.shutdown()
     assert rc == 0, (out, err)
@@ -133,14 +140,14 @@ def test_T1_chain_fetched_root_feeds_the_resolver_and_the_lane_passes(
 
 
 def test_T2_expired_root_on_the_feed_is_refused_before_any_verdict(
-    tmp_path, material
+    tmp_path, material, now
 ) -> None:
     keys, signer, bundle, paths = material
     root_path, base, httpd = _serve_with_root(
         tmp_path, revocation_root_document(keys, expires_in_days=-1)
     )
     try:
-        rc, face, out, err = _run(tmp_path, bundle, paths, base, root_path)
+        rc, face, out, err = _run(tmp_path, bundle, paths, base, root_path, now)
     finally:
         httpd.shutdown()
     assert rc == 2, (out, err)
@@ -149,7 +156,7 @@ def test_T2_expired_root_on_the_feed_is_refused_before_any_verdict(
     assert face["verdict"] is None  # no verdict about the bundle was formed
 
 
-def test_T3_under_signed_root_on_the_feed_is_refused(tmp_path, material) -> None:
+def test_T3_under_signed_root_on_the_feed_is_refused(tmp_path, material, now) -> None:
     """TUF authenticates the bytes; the role's own 2-of-3 is verified at the
     consumer. One valid signature rides the chain and is still refused."""
     keys, signer, bundle, paths = material
@@ -157,20 +164,20 @@ def test_T3_under_signed_root_on_the_feed_is_refused(tmp_path, material) -> None
         tmp_path, revocation_root_document(keys, sign_with=(0,))
     )
     try:
-        rc, face, out, err = _run(tmp_path, bundle, paths, base, root_path)
+        rc, face, out, err = _run(tmp_path, bundle, paths, base, root_path, now)
     finally:
         httpd.shutdown()
     assert rc == 2, (out, err)
     assert "TUFRevocationRootSignatureInvalid" in err
 
 
-def test_T4_unpinned_list_signer_on_the_feed_is_refused(tmp_path, material) -> None:
+def test_T4_unpinned_list_signer_on_the_feed_is_refused(tmp_path, material, now) -> None:
     keys, signer, bundle, paths = material
     root_path, base, httpd = _serve_with_root(
         tmp_path, revocation_root_document(keys, list_pinned_signer_under_keys=False)
     )
     try:
-        rc, face, out, err = _run(tmp_path, bundle, paths, base, root_path)
+        rc, face, out, err = _run(tmp_path, bundle, paths, base, root_path, now)
     finally:
         httpd.shutdown()
     assert rc == 2, (out, err)

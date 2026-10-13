@@ -318,7 +318,12 @@ def _parse_iso8601_utc(value: str) -> "datetime":
     dt = datetime.fromisoformat(normalized)  # raises ValueError on malformed input
     if dt.tzinfo is None:
         raise ValueError(f"{value!r} has no UTC offset")
-    return dt.astimezone(timezone.utc)
+    try:
+        return dt.astimezone(timezone.utc)
+    except OverflowError:
+        # the offset pushes the instant outside datetime's range (0001-01-01T00:00:00+01:00,
+        # 9999-12-31T23:59:59-01:00): a refusal in the documented family, never a crash
+        raise ValueError(f"{value!r} is outside the representable range once in UTC") from None
 
 
 # ---------------------------------------------------------------------------

@@ -1,5 +1,12 @@
 # chat_log_redaction_minimal
 
+> **Legacy front door, not evidence.** This pilot's `verify.py` predates the anchored CLI:
+> its `verify.py` runs the bundle's own `re_derive/*_pack.py`, so a bundle whose pack
+> exits 0 passes with the redaction spans wiped. A PASS here does not show that the
+> claimed output re-derives from the committed inputs; the anchored command in the root
+> README, with the spec, primitives and work-set held outside the bundle, is. The pilot
+> stays until it is migrated.
+
 V-Kernel S0 audit-bundle pilot — privacy / unstructured-chat PII redaction domain.
 
 Demonstrates the audit-bundle integrator on a multi-turn chat transcript:

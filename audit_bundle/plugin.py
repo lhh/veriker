@@ -230,6 +230,14 @@ class TypedCheck(Protocol):
 # ---------------------------------------------------------------------------
 
 
+class DeclaredInputMalformed(ValueError):
+    """Raised by a primitive when the VALUE of one of its declared inputs (a binding
+    param it lists in `expects`) is malformed: the auditor's own instruction is
+    wrong, not the artifact. Dispatch records it as could-not-conclude (exit 2,
+    DECLARED_INPUT_MALFORMED), never as evidence against the bundle. Raise it only
+    over binding params; a malformed PRODUCER input is an ordinary refusal."""
+
+
 @dataclass(frozen=True, slots=True)
 class RecomputedValue:
     """The value a ReDerivationPrimitive recomputed for one claimed output.
@@ -259,15 +267,25 @@ class ParsedInputs:
 @runtime_checkable
 class ReDerivationPrimitive(Protocol):
     primitive_id: str  # registry key; matches spec binding
+    # The binding params this primitive reads, each REQUIRED in the spec (no code
+    # default). `frozenset()` states that it reads none. Dispatch refuses a primitive
+    # without it (PRIMITIVE_UNDECLARED, exit 2), refuses a binding param nobody reads
+    # (UNKNOWN_SPEC_PARAM) or an expected one the binding omits (MISSING_SPEC_PARAM),
+    # and hands `recompute` only the declared keys. An optional `expects_optional`
+    # lists keys whose absence changes nothing the primitive computes. A subclass
+    # that overrides `recompute` must restate `expects`: an inherited declaration
+    # describes the base's computation, and dispatch does not count it.
+    expects: frozenset[str]
 
     def recompute(self, inputs: ParsedInputs, pack_section: dict) -> RecomputedValue:
         """Recompute the claimed output's value from bundle DATA.
 
         `pack_section` carries the per-output dispatch context:
-            {"output_id": str, "type": str, "params": dict, "claimed": object}
-        where `params` is the comparator params from the pinned spec and
-        `claimed` is the producer's stated value (read by the verifier from
-        outputs/<output_id>.json). The primitive returns the RE-derived value;
-        the verifier's comparator decides agreement. Pure recompute, no compare.
+            {"output_id": str, "type": str, "params": dict}
+        where `params` is the binding's params from the pinned spec restricted
+        to the keys this primitive declares (`expects` and `expects_optional`).
+        The producer's claimed value is NOT passed: the primitive returns the
+        RE-derived value and the verifier's comparator decides agreement. Pure
+        recompute, no compare.
         """
         ...

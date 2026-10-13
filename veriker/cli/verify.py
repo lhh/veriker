@@ -466,6 +466,28 @@ def _print_result(result: VerifyResult, plugins: list) -> None:
         for d in details:
             print(f"    recompute_detail  {_ts(d[len(_RECOMPUTE_DETAIL_PREFIX) :])}")
 
+    # WHAT DECIDED, AND ON WHOSE ROOT (above the summary: the summary stays the last line). One F depth 1: the verdict's state is the
+    # join's decision (audit_bundle/decide.py). A re-derivation over the producer's own
+    # record can only ever be consistency against that record, so the propositions a
+    # RELEASE rests on are reported as resting on the proposer's root only. The JSON
+    # face does not carry this yet (schema change batched with the next re-key).
+    decision = getattr(result, "decision", None)
+    if decision:
+        residual = decision.get("residual_proposer_root_only") or ()
+        parts = [
+            f"{decision['decision']} through multi_root "
+            f"(roots {'/'.join(decision['roots'])}; proposer {decision['proposer_root']})",
+            f"proposer root only on {len(residual)}/{decision['denominator']} propositions",
+        ]
+        if decision.get("unusable_records"):
+            parts.append(f"unusable {list(decision['unusable_records'])}")
+        if decision.get("contradicted"):
+            parts.append(f"contradicted {list(decision['contradicted'])}")
+        if decision.get("unconfirmed"):
+            parts.append(f"unconfirmed {list(decision['unconfirmed'])}")
+        if decision.get("held_by_policy"):
+            parts.append("held: admission unfinished")
+        print(f"decision  {'; '.join(parts)}")
     print()
     n_not_run = sum(1 for status, _, _ in rows if status == "NOT-RUN")
     n_pass = sum(1 for status, _, _ in rows if status == "PASS")
@@ -1955,8 +1977,50 @@ def _main_kit(args, face: dict) -> int:
         }
     )
     face["reason_codes"].extend(codes)
+    # DECLARED INPUTS (D2). Every dispatch refuses a primitive with no `expects`
+    # for the `recompute` it runs (PRIMITIVE_UNDECLARED, exit 2). Say so here,
+    # before any bundle is in the picture, so a kit author learns it from the
+    # kit check rather than from the first refused audit. A WARNING, not a
+    # verdict: whether kit mode exits non-zero on it is a contract decision
+    # (the v0.2.2 plugin-contract change), not taken here.
+    from audit_bundle.rederivation import registry as _registry
+    from audit_bundle.rederivation.dispatch import _declared_inputs, _Undeclared
+
+    undeclared: list[str] = []
+    malformed: dict[str, str] = {}
+    for row in rows:
+        for pid in row.get("registered") or ():
+            try:
+                declared = _declared_inputs(_registry.resolve_primitive(pid))
+            except Exception as exc:  # noqa: BLE001 - a warning must not end the run
+                malformed[pid] = f"resolving raised {type(exc).__name__}"
+                continue
+            if isinstance(declared, _Undeclared):
+                undeclared.append(pid)
+            elif isinstance(declared, str):
+                malformed[pid] = declared
+    face["cli_gates"].append(
+        {
+            "gate": "kit_declarations",
+            "status": "UNDECLARED" if (undeclared or malformed) else "DECLARED",
+            "undeclared": undeclared,
+            "malformed": malformed,
+        }
+    )
     if rows:
         _print_kit_result(rows)
+    for pid in undeclared:
+        print(
+            f"WARN  kit_declarations  {pid}: no `expects` for the recompute it runs; "
+            "every dispatch will refuse it (PRIMITIVE_UNDECLARED, exit 2). State "
+            "`expects = frozenset()` if it reads no binding param, or restate the "
+            "base's in a subclass that overrides `recompute`."
+        )
+    for pid, why in malformed.items():
+        print(
+            f"WARN  kit_declarations  {pid}: {why}; every dispatch will refuse it "
+            "(PRIMITIVE_EXPECTS_MALFORMED, exit 2)."
+        )
     # ERROR outranks REJECT: a kit that could not be loaded means this run could
     # not conclude about it, whatever the kits either side of it reported. The
     # mismatch rows are still on the face and still printed.

@@ -62,6 +62,8 @@ REFUSE_SEMANTIC = [
     (b'{"n": NaN}', "non_finite"),
     (b"[Infinity]", "non_finite"),
     (b"-Infinity", "non_finite"),
+    (b"1e999999", "non_finite"),  # a number token that overflows float: infinity by another spelling (2026-09-22)
+    (b'{"a": -1e999999}', "non_finite"),
     (("1" * (MAX_INT_DIGITS + 1)).encode(), "int_too_long"),
     ("-" + "1" * (MAX_INT_DIGITS + 1), "int_too_long"),
 ]
@@ -304,13 +306,16 @@ def test_sheet_query_input_loader_refuses_duplicate_keys(tmp_path):
 # 4 — the source ratchet
 # ---------------------------------------------------------------------------
 
-#: Every `json.loads(` / `json.load(` call site in audit_bundle/ that is NOT
-#: `strict_json.py`, keyed by file, with the reason it may exist. Semantics of a
-#: reason: "pinned copy" = a standalone module whose copy a parity test holds to
-#: the source; "verifier-held" = bytes the verifier itself wrote or the operator
-#: configured, never producer bytes; "round-trip" = json.loads(json.dumps(x)) as a
-#: deep copy of an in-memory value. Nothing on this list parses PRODUCER bytes
-#: loosely; a site that does belongs in the rewiring, not here.
+#: Every `json.loads(` / `json.load(` call and every `json.JSONDecoder(`
+#: construction in audit_bundle/ that is NOT `strict_json.py`, keyed by file,
+#: with the reason it may exist. Semantics of a reason: "pinned copy" = a
+#: standalone module whose copy a parity test holds to the source;
+#: "verifier-held" = bytes the verifier itself wrote or the operator
+#: configured, never producer bytes; "round-trip" = json.loads(json.dumps(x))
+#: as a deep copy of an in-memory value; "refusal only" = producer bytes parsed
+#: loosely only to decide they must be REFUSED, the value discarded. Nothing
+#: on this list ADMITS producer bytes through a loose parse; a site that does
+#: belongs in the rewiring, not here.
 ALLOWED_LOOSE_SITES: dict[str, str] = {
     "audit_bundle/_total_binding.py": "vendored canonical codec, pinned copy (test 2 above)",
     "audit_bundle/plugins/reference/control_rederivation.py": "standalone pack; _admit_loads (json.loads + the three hooks) is the family's pinned copy",
@@ -323,14 +328,21 @@ ALLOWED_LOOSE_SITES: dict[str, str] = {
     "audit_bundle/contract_slots.py": "verifier-held: the distribution's own contract_slots.json",
     "audit_bundle/source_registry/issuer_verifier.py": "verifier-held: operator-configured issuer allow-list",
     "audit_bundle/event_stream.py": "verifier-held: the verifier's own event-stream service response",
-    "audit_bundle/claimset.py": "is_strict_json_value: a SYNTAX-only scanner that discards the value; the strict path is _parse_refusing_duplicates",
+    "audit_bundle/claimset.py": "the oracle and refusal only: json.loads in stdlib_reads_as_json (the named oracle, off the verify path, reads as the stdlib does on purpose), and the _LIMITLESS decoder behind _read_text and _reads_as_a_document (refusal only: they decide that bytes are JSON-shaped and discard the value); what is ADMITTED is read by _read_strict (strict_json_loads). Both counts and _LIMITLESS's users are pinned below",
 }
 _SOURCE = "audit_bundle/strict_json.py"
 
 
+#: The `json.<attr>(` calls the ratchet counts: the two loose parsers, and a
+#: decoder built to parse with (its `.decode` / `.raw_decode` calls go through
+#: an instance, which the AST cannot trace back to `json`).
+_LOOSE_ATTRS = ("loads", "load", "JSONDecoder")
+
+
 def _loose_sites() -> dict[str, int]:
-    """Count `json.loads(` / `json.load(` CALL nodes per file via the AST —
-    docstrings and comments that merely mention the idiom do not count."""
+    """Count `json.loads(` / `json.load(` / `json.JSONDecoder(` CALL nodes per
+    file via the AST — docstrings and comments that merely mention the idiom
+    do not count."""
     import ast
 
     seen: dict[str, int] = {}
@@ -342,7 +354,7 @@ def _loose_sites() -> dict[str, int]:
             for node in ast.walk(tree)
             if isinstance(node, ast.Call)
             and isinstance(node.func, ast.Attribute)
-            and node.func.attr in ("loads", "load")
+            and node.func.attr in _LOOSE_ATTRS
             and isinstance(node.func.value, ast.Name)
             and node.func.value.id == "json"
         )
@@ -377,6 +389,35 @@ def test_no_new_bare_json_loads():
     )
 
 
+#: Allow-listed files whose loose sites are also COUNTED: a new json.loads on
+#: an admission path in one of them would otherwise ride its row.
+_PINNED_SITE_COUNTS = {"audit_bundle/claimset.py": 2}
+
+
+def test_pinned_files_keep_their_loose_site_counts():
+    seen = _loose_sites()
+    for rel, n in _PINNED_SITE_COUNTS.items():
+        assert seen.get(rel) == n, (rel, seen.get(rel), n)
+
+
+def test_claimset_limitless_decoder_is_used_only_by_the_refusal_readers():
+    """`_LIMITLESS` parses producer bytes loosely; its `.decode` /
+    `.raw_decode` calls go through the instance, which the site count cannot
+    see. Pin the functions that touch it: the two refusal readers, never an
+    admission path."""
+    import ast
+
+    tree = ast.parse((_PKG_ROOT / "audit_bundle" / "claimset.py").read_text(encoding="utf-8"))
+    users = {
+        fn.name
+        for fn in ast.walk(tree)
+        if isinstance(fn, ast.FunctionDef)
+        for node in ast.walk(fn)
+        if isinstance(node, ast.Name) and node.id == "_LIMITLESS"
+    }
+    assert users == {"_read_text", "_reads_as_a_document"}, users
+
+
 def test_ratchet_scanner_counts_calls_not_prose(tmp_path, monkeypatch):
     """Self-validation: a docstring mentioning json.loads(manifest.json) is not a
     site; a real call is, in either spelling."""
@@ -392,6 +433,7 @@ def test_ratchet_scanner_counts_calls_not_prose(tmp_path, monkeypatch):
         '    return json.load(fh)\n'
         'def h(b):\n'
         '    return strict_json_loads(b)\n'
+        '_D = json.JSONDecoder(parse_int=str)\n'
     )
     tree = ast.parse(src)
     n = sum(
@@ -399,8 +441,8 @@ def test_ratchet_scanner_counts_calls_not_prose(tmp_path, monkeypatch):
         for node in ast.walk(tree)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Attribute)
-        and node.func.attr in ("loads", "load")
+        and node.func.attr in _LOOSE_ATTRS
         and isinstance(node.func.value, ast.Name)
         and node.func.value.id == "json"
     )
-    assert n == 2
+    assert n == 3

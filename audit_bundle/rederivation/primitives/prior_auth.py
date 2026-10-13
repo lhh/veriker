@@ -206,6 +206,7 @@ class PriorAuthRecompute:
     verdict list from the committed requests + plan rules."""
 
     primitive_id: str = "prior_auth_recompute"
+    expects = frozenset()  # declared inputs: this primitive reads no binding param
     primitive_shape: str = "first-match rule -> verdict + default (decision list)"
     primitive_version: str = "1"
     primitive_tier: str = "A"

@@ -84,6 +84,7 @@ def test_a_kit_primitive_is_not_required_to_declare_anything() -> None:
 
     class _KitPrimitive:
         primitive_id = "kit_only_recompute"
+        expects = frozenset()  # declared inputs: this primitive reads no binding param
 
         def recompute(self, inputs, pack_section):  # pragma: no cover - never run
             raise AssertionError("not invoked")

@@ -1,5 +1,12 @@
 # lifesci_binding_minimal — Drug-Binding Affinity Audit Bundle
 
+> **Legacy front door, not evidence.** This pilot's `verify.py` predates the anchored CLI:
+> its check runs the pilot's own re-derivation plugin against an unanchored spec; the
+> tamper demo below is the one that fails as promised. A PASS here does not show that the
+> claimed output re-derives from the committed inputs; the anchored command in the root
+> README, with the spec, primitives and work-set held outside the bundle, is. The pilot
+> stays until it is migrated.
+
 Minimal domain pilot: a drug-discovery binding-affinity predictor bundled for
 V-Kernel audit verification (the audit-bundle contract §C5, C6, C9).
 
@@ -93,7 +100,7 @@ re-aligned):
 import json, pathlib
 p = pathlib.Path('/tmp/lifesci_binding_bundle/inputs/compound_descriptor.json')
 d = json.loads(p.read_text())
-d['smiles_string'] += 'X'    # appends one character, shifts bucket counts
+d['smiles_string'] = 'C' + d['smiles_string']   # one more carbon shifts the bucket counts
 p.write_text(json.dumps(d, indent=2, sort_keys=True) + '\n')
 ```
 
@@ -104,8 +111,10 @@ python examples/lifesci_binding_minimal/verify.py --bundle-dir /tmp/lifesci_bind
 ```
 
 Expected exit code: `1`. Stderr includes `BAD_FILE_SHA` (SHA mismatch caught
-first) or `RE_DERIVATION_MISMATCH` (if manifest SHA was re-aligned to
-tampered input).
+first) or, if the manifest digest was re-aligned to the tampered input,
+`RE_DERIVATION_MISMATCH` from `binding_affinity_re_derivation`. (Appending a
+character that hashes to a zero-weight bucket, such as `X`, is caught only by
+file integrity.)
 
 ## Fragment anchors
 

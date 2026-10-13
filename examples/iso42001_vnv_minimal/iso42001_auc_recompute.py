@@ -181,6 +181,7 @@ class Iso42001AucRecompute:
     """Verifier-side primitive for re-deriving a reported model-validation AUC."""
 
     primitive_id: str = "iso42001_auc_recompute"
+    expects = frozenset()  # declared inputs: this primitive reads no binding param
 
     def recompute(self, inputs, pack_section: dict):
         """Recompute ROC-AUC from inputs/test_set.json in the bundle, as an

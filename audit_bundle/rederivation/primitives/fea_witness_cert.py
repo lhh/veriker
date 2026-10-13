@@ -42,9 +42,17 @@ input_anchor: {role → sha256} over the roles in ROLE_PATHS. Present → the
 committed bytes must match or the certificate refuses (the H1 kill shot: an
 honest witness for a SUBSTITUTED lighter load case passes unanchored and REDs
 anchored). Roles are validated against the COMPUTED role set — an anchor naming
-an unknown role is refused, never silently ignored. Absent → unanchored mode:
+an unknown role is refused, never silently ignored. `null` → unanchored mode:
 the certificate degrades to the witness-implied-stress predicate over a
 producer-chosen problem, and says so in its detail.
+
+DECLARED INPUTS (the declared-inputs contract, REASON_CODES.md UNKNOWN_SPEC_PARAM / MISSING_SPEC_PARAM, version 2): the binding
+MUST state `equilibrium_tol`, `epsilon`, `input_anchor` and
+`conditioning_bound`; dispatch refuses a binding that omits one
+(MISSING_SPEC_PARAM) and this primitive supplies no default. Unanchored mode is
+therefore a choice the auditor writes down (`"input_anchor": null`), never what
+an omitted key silently means. `quantity` is optional: it is a cross-check on
+the primitive's identity and changes nothing when absent.
 
 CONDITIONING BOUND δ (spike E4b leg 2): with conditioning_bound=true (which
 REQUIRES the full input anchor — δ over a producer-chosen problem answers the
@@ -121,6 +129,11 @@ from ..registry import register_primitive
 PARAMS_MALFORMED = "FEA_CERT_PARAMS_MALFORMED"
 ANCHOR_ROLE_UNDECLARED = "FEA_CERT_ANCHOR_ROLE_UNDECLARED"
 CONDITIONING_REQUIRES_FULL_ANCHOR = "FEA_CERT_CONDITIONING_REQUIRES_FULL_ANCHOR"
+# Refusals about the BINDING's params, not the producer's bundle. Raised to dispatch
+# as DeclaredInputMalformed (exit 2), never returned as a refusal of the artifact.
+_SPEC_SIDE_REFUSALS = frozenset(
+    {PARAMS_MALFORMED, ANCHOR_ROLE_UNDECLARED, CONDITIONING_REQUIRES_FULL_ANCHOR}
+)
 EVIDENCE_MISSING = "FEA_CERT_EVIDENCE_MISSING"
 EVIDENCE_MALFORMED = "FEA_CERT_EVIDENCE_MALFORMED"
 INPUT_ANCHOR_MISMATCH = "FEA_CERT_INPUT_ANCHOR_MISMATCH"
@@ -490,8 +503,17 @@ def run_certificate(
             f"params quantity {params['quantity']!r} contradicts the bound "
             f"primitive's quantity {quantity!r}",
         )
+    for name in ("input_anchor", "conditioning_bound"):
+        if name not in params:
+            # No default for a value the asker owns (the declared-inputs contract).
+            # Dispatch already refuses the omission; a direct caller gets it here.
+            raise _Refusal(
+                PARAMS_MALFORMED,
+                f"param {name} must be stated (use null / false explicitly); "
+                "this primitive supplies no default",
+            )
     anchor = _validate_anchor(params)
-    conditioning = params.get("conditioning_bound", False)
+    conditioning = params["conditioning_bound"]
     if not isinstance(conditioning, bool):
         raise _Refusal(PARAMS_MALFORMED, "conditioning_bound must be a boolean")
     if conditioning and (anchor is None or set(anchor) != set(ROLE_PATHS)):
@@ -788,7 +810,7 @@ class FeaWitnessCertificate:
 
     primitive_id: str = "fea_witness_certificate"
     primitive_shape: str = "witness + certificate"
-    primitive_version: str = "1"
+    primitive_version: str = "2"
     primitive_tier: str = "C"
     primitive_contract: str = (
         "Given the producer's committed displacement-field witness "
@@ -806,13 +828,20 @@ class FeaWitnessCertificate:
         "Declared semantics are honoured, not assumed: material must declare "
         "model=linear_elastic_isotropic and stress_state=plane_stress, and mesh "
         "must declare element_type=CST and dim=2, or the certificate refuses.",
-        "Without the comparator param input_anchor the certificate degrades to "
-        "a witness-implied predicate over a PRODUCER-CHOSEN problem, and says "
-        "so in its detail.",
+        "With input_anchor stated as null the certificate degrades to a "
+        "witness-implied predicate over a PRODUCER-CHOSEN problem, and says so "
+        "in its detail. Every param it reads must be stated: no defaults. A "
+        "malformed or inconsistent param is could-not-conclude "
+        "(DECLARED_INPUT_MALFORMED), never a refusal of the bundle.",
         "This source file holds three registered primitives, so a #sha256 pin "
         "on any one of them also pins its two siblings.",
     )
     quantity: str = QUANTITIES[0]
+    # the declared-inputs contract: the binding params this primitive reads.
+    expects: frozenset[str] = frozenset(
+        {"equilibrium_tol", "epsilon", "input_anchor", "conditioning_bound"}
+    )
+    expects_optional: frozenset[str] = frozenset({"quantity"})
 
     def recompute(self, inputs: ParsedInputs, pack_section: dict) -> RecomputedValue:
         params = pack_section.get("params") if isinstance(pack_section, dict) else None
@@ -821,6 +850,12 @@ class FeaWitnessCertificate:
                 inputs.bundle_dir, params or {}, self.quantity
             )
         except _Refusal as r:
+            if r.code in _SPEC_SIDE_REFUSALS:
+                # The binding's own params are malformed or inconsistent: the
+                # auditor's instruction, not the artifact -> could not conclude.
+                from audit_bundle.plugin import DeclaredInputMalformed  # noqa: PLC0415
+
+                raise DeclaredInputMalformed(f"{r.code}: {r.detail}") from None
             return RecomputedValue(
                 value={"kind": "refused", "reason_code": r.code, "detail": r.detail},
                 detail=f"certificate refused: {r.code}",
@@ -834,7 +869,7 @@ class FeaWitnessCertificateUNorm2(FeaWitnessCertificate):
 
     primitive_id: str = "fea_witness_certificate_u_norm_2"
     primitive_shape: str = "witness + certificate"
-    primitive_version: str = "1"
+    primitive_version: str = "2"
     primitive_tier: str = "C"
     primitive_contract: str = (
         "The same certificate gates as fea_witness_certificate, returning "
@@ -848,9 +883,11 @@ class FeaWitnessCertificateUNorm2(FeaWitnessCertificate):
         "Declared semantics are honoured, not assumed: material must declare "
         "model=linear_elastic_isotropic and stress_state=plane_stress, and mesh "
         "must declare element_type=CST and dim=2, or the certificate refuses.",
-        "Without the comparator param input_anchor the certificate degrades to "
-        "a witness-implied predicate over a PRODUCER-CHOSEN problem, and says "
-        "so in its detail.",
+        "With input_anchor stated as null the certificate degrades to a "
+        "witness-implied predicate over a PRODUCER-CHOSEN problem, and says so "
+        "in its detail. Every param it reads must be stated: no defaults. A "
+        "malformed or inconsistent param is could-not-conclude "
+        "(DECLARED_INPUT_MALFORMED), never a refusal of the bundle.",
         "This source file holds three registered primitives, so a #sha256 pin "
         "on any one of them also pins its two siblings.",
     )
@@ -863,7 +900,7 @@ class FeaWitnessCertificateUNormInf(FeaWitnessCertificate):
 
     primitive_id: str = "fea_witness_certificate_u_norm_inf"
     primitive_shape: str = "witness + certificate"
-    primitive_version: str = "1"
+    primitive_version: str = "2"
     primitive_tier: str = "C"
     primitive_contract: str = (
         "The same certificate gates as fea_witness_certificate, returning "
@@ -877,9 +914,11 @@ class FeaWitnessCertificateUNormInf(FeaWitnessCertificate):
         "Declared semantics are honoured, not assumed: material must declare "
         "model=linear_elastic_isotropic and stress_state=plane_stress, and mesh "
         "must declare element_type=CST and dim=2, or the certificate refuses.",
-        "Without the comparator param input_anchor the certificate degrades to "
-        "a witness-implied predicate over a PRODUCER-CHOSEN problem, and says "
-        "so in its detail.",
+        "With input_anchor stated as null the certificate degrades to a "
+        "witness-implied predicate over a PRODUCER-CHOSEN problem, and says so "
+        "in its detail. Every param it reads must be stated: no defaults. A "
+        "malformed or inconsistent param is could-not-conclude "
+        "(DECLARED_INPUT_MALFORMED), never a refusal of the bundle.",
         "This source file holds three registered primitives, so a #sha256 pin "
         "on any one of them also pins its two siblings.",
     )

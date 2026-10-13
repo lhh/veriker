@@ -212,6 +212,7 @@ class EventLogReplayRecompute:
     the bundle's append-only event log; return its SHA-256 digest."""
 
     primitive_id: str = "event_log_replay_recompute"
+    expects = frozenset()  # declared inputs: this primitive reads no binding param
     primitive_shape: str = "event-log replay -> reconstructed-record digest"
     primitive_version: str = "1"
     primitive_tier: str = "A"

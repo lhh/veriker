@@ -157,6 +157,7 @@ class HealthcareDiagnosisRecompute:
     list from the committed symptom set + decision rules."""
 
     primitive_id: str = "healthcare_diagnosis_recompute"
+    expects = frozenset()  # declared inputs: this primitive reads no binding param
     primitive_shape: str = "fire-and-collect (decision list)"
     primitive_version: str = "1"
     primitive_tier: str = "A"

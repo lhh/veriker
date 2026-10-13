@@ -91,6 +91,7 @@ class Iso42001DisparateImpactRecompute:
     """
 
     primitive_id: str = "iso42001_disparate_impact_recompute"
+    expects = frozenset()  # declared inputs: this primitive reads no binding param
 
     def recompute(self, inputs, pack_section: dict):
         from audit_bundle.plugin import RecomputedValue  # noqa: PLC0415

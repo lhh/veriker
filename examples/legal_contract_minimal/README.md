@@ -1,5 +1,12 @@
 # legal_contract_minimal — V-Kernel S0 pilot
 
+> **Legacy front door, not evidence.** This pilot's `verify.py` predates the anchored CLI:
+> its `verify.py` runs the bundle's own `re_derive/*_pack.py`, so a bundle whose pack
+> exits 0 passes with a forged retrieval result. A PASS here does not show that the
+> claimed output re-derives from the committed inputs; the anchored command in the root
+> README, with the spec, primitives and work-set held outside the bundle, is. The pilot
+> stays until it is migrated.
+
 Domain: **legal / counterparty risk** — contract-clause precedent retrieval.
 
 Re-derivation primitive (one sentence): for each clause (sorted by `clause_id`),

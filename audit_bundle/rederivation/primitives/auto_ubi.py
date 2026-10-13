@@ -222,6 +222,7 @@ class AutoUbiRecompute:
     from the committed telematics trips + rate table."""
 
     primitive_id: str = "auto_ubi_recompute"
+    expects = frozenset()  # declared inputs: this primitive reads no binding param
     primitive_shape: str = "feature-aggregation -> threshold-classify"
     primitive_version: str = "1"
     primitive_tier: str = "A"

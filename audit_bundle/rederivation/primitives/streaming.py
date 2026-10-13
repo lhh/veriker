@@ -158,6 +158,7 @@ class StreamingRecompute:
     """Verifier-side primitive for re-deriving the per-window aggregate list."""
 
     primitive_id: str = "streaming_recompute"
+    expects = frozenset()  # declared inputs: this primitive reads no binding param
     primitive_shape: str = "streaming aggregation"
     primitive_version: str = "1"
     primitive_tier: str = "A"

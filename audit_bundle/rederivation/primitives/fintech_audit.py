@@ -194,6 +194,7 @@ class FintechAuditRecompute:
     list by re-running each policy's AND-ed conditions over each transaction."""
 
     primitive_id: str = "fintech_audit_recompute"
+    expects = frozenset()  # declared inputs: this primitive reads no binding param
     primitive_shape: str = "all-pairs predicate -> verdict-or-NOT_APPLICABLE (decision list)"
     primitive_version: str = "1"
     primitive_tier: str = "A"

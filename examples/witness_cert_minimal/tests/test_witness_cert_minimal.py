@@ -213,7 +213,7 @@ def test_the_same_lighter_case_passes_UNANCHORED(tmp_path):
     spec = json.loads(_SPEC_SRC.read_bytes())
     for tdef in spec["types"].values():
         params = tdef["comparator"]["params"]
-        params.pop("input_anchor", None)
+        params["input_anchor"] = None  # unanchored is STATED (the declared-inputs contract)
         params["conditioning_bound"] = False  # a delta requires the full anchor
     spec["spec_id"] = "witness.cert.unanchored.v1"
     spec_bytes = (json.dumps(spec, indent=2, sort_keys=True) + "\n").encode("utf-8")

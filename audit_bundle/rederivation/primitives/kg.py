@@ -112,6 +112,7 @@ class KgRecompute:
     """Verifier-side primitive for re-deriving the answer_nodes collection."""
 
     primitive_id: str = "kg_recompute"
+    expects = frozenset()  # declared inputs: this primitive reads no binding param
     primitive_shape: str = "knowledge-graph derivation"
     primitive_version: str = "1"
     primitive_tier: str = "A"

@@ -114,6 +114,8 @@ def test_empty_detail_mints_no_row_and_moves_no_verdict(
         return RecomputedValue(value=got.value, detail="")
 
     monkeypatch.setattr(primitive, "recompute", _silent)
+    # a replaced `recompute` must restate the declaration it reads under
+    monkeypatch.setattr(primitive, "expects", primitive.expects)
     result = verifier.verify(clean)
     assert result.ok, [f.detail for f in result.failures]
     rows = _rows(result)

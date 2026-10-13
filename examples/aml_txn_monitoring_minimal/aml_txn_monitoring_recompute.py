@@ -167,6 +167,7 @@ class AmlTxnMonitoringRecompute:
     decision list."""
 
     primitive_id: str = "aml_txn_monitoring_recompute"
+    expects = frozenset()  # declared inputs: this primitive reads no binding param
 
     def recompute(self, inputs, pack_section: dict):
         """Recompute the per-customer coaf_report_triggered decision list from the

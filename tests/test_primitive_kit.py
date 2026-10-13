@@ -1349,6 +1349,33 @@ def test_kit_mode_no_manifest_exits_zero_and_the_face_says_absent(
     assert face["reason_codes"] == []
 
 
+def test_kit_mode_warns_on_an_undeclared_primitive(tmp_path: Path) -> None:
+    """D2 (red-team F5, 2026-09-28): a kit primitive with no `expects` is refused
+    at every dispatch; kit mode says so before any bundle is involved. A warning
+    and a face row, not a verdict: the exit code is unchanged."""
+    kit = _write_kit(tmp_path / "kit.py", "kit_mode_undeclared")
+    code, face, proc = _run_kit_cli(tmp_path / "v.json", str(kit))
+    assert code == 0, (code, proc.stdout, proc.stderr)
+    gate = {g["gate"]: g for g in face["cli_gates"]}["kit_declarations"]
+    assert gate["status"] == "UNDECLARED", gate
+    assert gate["undeclared"] == ["kit_mode_undeclared"], gate
+    assert "WARN  kit_declarations  kit_mode_undeclared" in proc.stdout, proc.stdout
+    assert "PRIMITIVE_UNDECLARED" in proc.stdout, proc.stdout
+
+
+def test_kit_mode_a_declared_kit_has_no_warning(tmp_path: Path) -> None:
+    code, face, proc = _run_kit_cli(tmp_path / "v.json", str(_CLIMATE_KIT))
+    assert code == 0, (code, proc.stdout, proc.stderr)
+    gate = {g["gate"]: g for g in face["cli_gates"]}["kit_declarations"]
+    assert gate == {
+        "gate": "kit_declarations",
+        "status": "DECLARED",
+        "undeclared": [],
+        "malformed": {},
+    }, gate
+    assert "kit_declarations" not in proc.stdout, proc.stdout
+
+
 def test_kit_mode_refuses_bundle_only_flags(tmp_path: Path) -> None:
     """A bundle-mode flag silently ignored in kit mode is a fail-open reading:
     `--require-rederivation --kit X` returning 0 would tell an operator that

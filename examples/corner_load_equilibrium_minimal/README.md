@@ -181,7 +181,8 @@ producer's physics and is a different engagement.
 ## What is pinned, and what is not
 
 Of the bundle's three inputs, exactly one is checked against a verifier-held
-reference: `equilibrium_residual_recompute.TRUSTED_RIGID_BODY_SPEC_SHA256` pins
+reference: the auditor's spec states `rigid_body_sha256` (a declared input of every
+channel primitive, never a constant of the module) and it pins
 `inputs/vehicle_spec.json` to the sha256 of the exact bytes `_build_bundle.py`
 emits from its `_VEHICLE` module constant, and a mismatch fails closed
 (`RECOMPUTE_ERROR`, REJECT, exit 1) before any residual is computed. That is
@@ -404,7 +405,7 @@ running, and why it is worth running by someone other than the producer.
 | `_producer_solve.py` | producer | reference Newton solve — the ECU-infeasible half |
 | `_producer_surrogate.py` | producer | the deployed ridge-fitted approximation |
 | `_build_bundle.py` | producer | trains, infers, emits the bundle |
-| `equilibrium_residual_recompute.py` | **auditor** | exact-rational residual certificates; pins the rigid-body fields of `inputs/vehicle_spec.json` to `TRUSTED_RIGID_BODY_SPEC_SHA256` |
+| `equilibrium_residual_recompute.py` | **auditor** | exact-rational residual certificates; checks the rigid-body fields of `inputs/vehicle_spec.json` against the `rigid_body_sha256` the auditor's spec states |
 | `auditor_kit.py` | **auditor** | primitive registrations |
 | `auditor_entry.py` | **auditor** | the one anchored verifier both auditor tools build; mining-admission policy |
 | `spec_pinned/corner_load_equilibrium.spec.json` | **auditor** | bindings + ε |

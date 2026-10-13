@@ -124,6 +124,7 @@ class HealthcareDiagnosisConfidenceRecompute:
     confidence, selected by the ICD-10 code carried in the output_id."""
 
     primitive_id: str = "healthcare_diagnosis_confidence_recompute"
+    expects = frozenset()  # declared inputs: this primitive reads no binding param
 
     def recompute(self, inputs, pack_section: dict):
         from audit_bundle.plugin import RecomputedValue  # verifier-side import OK

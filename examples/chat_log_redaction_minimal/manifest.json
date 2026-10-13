@@ -4,9 +4,9 @@
   "cross_refs": {},
   "files": {
     "ChatLogRedactionReDerivationCheck.py": "cc696e8c36868a2436d23e6b04c5d82f8bcd08449ed1a9357f6b7ddefb5b08d3",
-    "README.md": "91064d6e60139d5839c3dd58699db5fb28449d82e2a9462390acb52db3cab579",
+    "README.md": "1688cc28d419b00a483894173ada456b42faec4452dfc2b3c1603475ba4bdf01",
     "_build_bundle.py": "f560af5ec17400326a65ae06dbf015fc2521b87c69aaeaec836e47ffe9b1888c",
-    "chat_log_redaction_recompute.py": "c70731db88453e38e67e04d260c2bbcac6c146bf924a3e8015e55eac3a57398a",
+    "chat_log_redaction_recompute.py": "57e4c7749cf3a6b3396162aa14c9ff00c4a8491bd7baf8c22785f3a9a851377f",
     "inputs/redaction_policy.json": "32b2cda107ca7a204e5c0a2a2cb0299ea9be2a8441a5c60d3f74d22eb2d0b5c0",
     "inputs/transcript.txt": "72f6adc213b2b3ae5369c759cd602da3bf00f1aba8120f31f890d32e0dbe52fa",
     "payload/redaction_result.json": "ed06cf3ebd0cab18281b00a4095d4aeb18c9f166977e51c1e9cff8ba33f029cd",

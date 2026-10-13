@@ -105,6 +105,7 @@ class Iso42001LogChainHeadRecompute:
     """Verifier-side primitive for re-deriving an event-log chain head digest."""
 
     primitive_id: str = "iso42001_log_chain_head_recompute"
+    expects = frozenset()  # declared inputs: this primitive reads no binding param
 
     def recompute(self, inputs, pack_section: dict):
         from audit_bundle.plugin import RecomputedValue  # noqa: PLC0415

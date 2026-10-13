@@ -264,6 +264,689 @@ def test_invalid_utf8_is_admitted_as_opaque(tmp_path):
     assert u["elements"] == ["artifact"]
 
 
+def _refused_under_both(tmp_path, raw, *, opaque_match, structured_match):
+    b = _write_bundle(tmp_path, {"payload/a.bin": raw})
+    pins = {"payload/a.bin": _sha(raw)}
+    with pytest.raises(ClaimsetError, match=opaque_match):
+        enumerate_claim_universe(
+            b, bundle_id="x", claim_files={}, manifest_files=pins,
+            opaque_claim_files={"artifact": "payload/a.bin"},
+        )
+    with pytest.raises(ClaimsetError, match=structured_match):
+        enumerate_claim_universe(
+            b, bundle_id="x", claim_files={"artifact": "payload/a.bin"}, manifest_files=pins,
+        )
+
+
+def _admitted_opaque(tmp_path, raw):
+    b = _write_bundle(tmp_path, {"payload/a.bin": raw})
+    u = enumerate_claim_universe(
+        b,
+        bundle_id="x",
+        claim_files={},
+        manifest_files={"payload/a.bin": _sha(raw)},
+        opaque_claim_files={"artifact": "payload/a.bin"},
+    )
+    assert u["elements"] == ["artifact"]
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [b"\xff\xfe", "\n".encode("utf-16"), b"\xef\xbb\xbf \n", "\u00a0\n\u3000".encode("utf-16-le")],
+    ids=["utf16-bom-only", "utf16-bom-newline", "utf8-bom-whitespace", "utf16-le-unicode-space"],
+)
+def test_whitespace_once_decoded_is_hollow(tmp_path, raw):
+    """A BOM (or UTF-16 whitespace) in front of nothing is a hollow claim,
+    refused everywhere, not an opaque artifact. These were admitted opaque in
+    v0.2.1, and an earlier commit on this branch pinned that as correct."""
+    from audit_bundle.claimset import ClaimBytesKind, classify_kind
+
+    assert classify_kind(raw, "t") == (ClaimBytesKind.HOLLOW, [])
+    _refused_under_both(tmp_path, raw, opaque_match="hollow", structured_match="hollow")
+
+
+_OBJ = b'{"amount": 100, "payee": {"name": "x", "iban": "y"}}'
+_PRETTY = b'{\n  "amount": 100,\n  "payee": {"name": "x"}\n}\n'
+_BOM8 = b"\xef\xbb\xbf"
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b"0\n" + _BOM8 + b'{"secret": 1}\n',
+        b"0\n" + _BOM8 + b"1\n",
+        b"\n" + _BOM8 + _OBJ,
+        b"1\n" + _OBJ.decode().encode("utf-16") + b"\n",
+        b"1\n[\x00]\x00\n",
+        b"1\n" + _OBJ.decode().encode("utf-32") + b"\n",
+        _OBJ.decode().encode("utf-16") + b"\n",
+        _BOM8 + b'{"amount": 100, "memo": "\xed\xa0\x80"}',
+        b'"\xed\xa0\x80"',
+        b'1\n{"amount": 100, "memo": "\xed\xa0\x80"}\n',
+        '{"a": "\ud800"}'.encode("utf-16", "surrogatepass"),
+        b"\t\n\n\xff\xfe[\x00]\x00",
+        b"\r\t\r\x00{\x00}",
+        b"1\n" + '"\ud800"'.encode("utf-16", "surrogatepass") + b"\n",
+        b"\xef\xbb\xbf\x0c\n\n\n\n-2.5",
+        b'\xef\xbb\xbf\n1\n"\xe2\x80\xa8"',
+        '1\n"\u2028"'.encode("utf-16"),
+        '1\n{"a":"\u2028"}\n\x001'.encode("utf-16"),
+        '1\n"a\u0085b"\n'.encode("utf-16"),
+        '"x"\n"a\u2029b"\n'.encode("utf-32"),
+        '1\n"a\u2028b"'.encode("utf-16-le"),
+        '1\x00\n{"a":"x\u2028y"}'.encode("utf-16"),
+        b"\xef\xbb\xbf" + ' {"a":"\u010c"}'.encode("utf-16-le") + b"\n2",
+        b"\xef\xbb\xbf\x00[\x001\x00]",
+        "\x00[\x001\x00]".encode("utf-32"),
+        b"\xff\xfe \x00\x00\x00{\x00\x00\x00}\x00\x00\x00",
+    ],
+    ids=[
+        "bom-on-line-2",
+        "bom-on-line-2-scalars",
+        "bom-after-leading-newline",
+        "utf16-line-in-utf8-body",
+        "utf16-le-bare-line",
+        "utf32-line-in-utf8-body",
+        "utf16-odd-length",
+        "surrogate-behind-utf8-bom",
+        "surrogate-scalar",
+        "surrogate-in-jsonl",
+        "surrogate-in-utf16",
+        "utf16-bom-after-leading-whitespace",
+        "utf16-be-line-after-cr",
+        # a string holding a lone surrogate, alone on a UTF-16 line: every
+        # line reads once decoded with surrogates passed
+        "surrogate-scalar-on-utf16-line",
+        # the whole body, decoded and trimmed of U+FEFF, FF and LF, reads as
+        # -2.5
+        "bom-formfeed-then-scalar",
+        # a raw U+2028 / U+0085 / U+2029 INSIDE a JSON string: str.splitlines
+        # breaks there, the oracle (LF/CR lines of the decoded text) does not
+        "bom-body-u2028-in-string",
+        "utf16-u2028-in-string",
+        "utf16-object-with-u2028-and-a-utf16be-line",
+        "utf16-nel-in-string",
+        "utf32-ps-in-string",
+        "utf16le-u2028-in-string",
+        "utf16-line-read-as-utf16le-on-its-own",
+        "bom-then-utf16le-line",
+        # found by the round-4 fuzz, a hole 2053eddf4 opened: the decoded text is
+        # ONE line, and json.loads reads its UTF-8 bytes as UTF-16-BE; the
+        # decoded split was skipped for a single line
+        "one-decoded-line-read-as-utf16be",
+        "one-utf32-decoded-line-read-as-utf16be",
+        "one-utf16-decoded-line-read-as-utf16le",
+    ],
+)
+def test_what_the_stdlib_reader_reads_is_never_opaque(tmp_path, raw):
+    """K5, which fired on v0.2.1: `json.loads(bytes)` reads each of these (the
+    whole body, or every line with that line's own detected encoding and
+    surrogates passed), yet each was admitted as ONE opaque element. The
+    classifier's refusal reader now reads everything the stdlib reads."""
+    from audit_bundle.claimset import stdlib_reads_as_json
+
+    assert stdlib_reads_as_json(raw)  # the oracle, not the classifier, says JSON
+    _refused_under_both(
+        tmp_path, raw, opaque_match="corrupt", structured_match="corrupt|duplicate|BOM"
+    )
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        _BOM8 + _OBJ + b"\n\xff\n",
+        'garbage\n{"x": 1, "y": {"z": 2}}\n'.encode("utf-16") + b"\n",
+        b"\x0c" + _OBJ,
+        "\u00a0".encode() + _OBJ,
+        b"\x1e" + _OBJ + b'\n\x1e{"k": 2}\n',
+        b"1" + "\u2028".encode() + _OBJ,
+        b"1" + "\u0085".encode() + _OBJ,
+        b'1\n{"amount":\r100, "payee": {"name": "x"}}\n',
+        b"0 " + _OBJ,
+        b'"v1"\n' + _PRETTY,
+        b"// generated by exporter v3\n" + _PRETTY,
+        b"/* header */ " + _PRETTY,
+        b")]}'\n" + _PRETTY,
+        b")]}',\n" + _PRETTY,
+        b"\r\n)]}'\n" + _PRETTY,
+        b'1\n{"amount": 100, "payee": {"name": "x"},}\n',
+        b'0\n{"a": 1,}\n',
+        'x\n{"amount": 100, "memo": "\u2028"}\n'.encode("utf-16"),
+        b'x\n{"a":1}\xff\n',
+        'garbage\n{"amount": 100, "memo": "a\u0085b"}\n'.encode("utf-16"),
+        b'garbage\n{"amount": 100,\r"payee": "x"}\n',
+        b"// exported\x0cby tool v3\n" + _PRETTY,
+        "// exported\u0085by tool v3\n".encode() + _PRETTY,
+        b"0 [1, 2]\n1 [3, 4]\n",
+        'garbage\n{"a":\r1}\n'.encode("utf-16"),
+        'garbage\n{"a": "\u020a",\r"b": 1}\n'.encode("utf-16"),
+        'garbage\n \ufeff{"a": 1}\n'.encode(),
+        b'0 {"a": 1, /* c */ "b": 2}',
+        '0 {"a":\ufeff1}'.encode(),
+        b'garbage\x0c{"amount": 100, "payee": "x"}\n',
+        b'garbage\x1c{"amount": 100}',
+        'garbage\u0085{"amount": 100}'.encode(),
+        'garbage\u2028{"amount": 100}'.encode(),
+        b'# exported by tool\x0b{"amount": 100}\x0b{"amount": 7}\n',
+        b'\x1egarbage\x1e{"amount": 100}',
+        b'for (;;);{"amount": 100, "payee": "x"}',
+        b'while(1);{"amount": 100}',
+        b'garbage\n\x00{"amount": 100}\x00\n',
+        b"1\n\xc2\xa0\n2\n",
+        ('garbage\n{"amount": ' + "9" * 4301 + ', "payee": "x"}\n').encode("utf-16"),
+        ("9" * 4301).encode("utf-16"),
+        ('garbage\n\x0c{"amount": ' + "9" * 4301 + ', "payee": "x"}\n').encode(),
+        b'garbage\n{"amount": ' + b"9" * 4301 + b', "b": "\xff"}\n',
+        b"1\n\x00  (\n2\n",
+        b"\xef\xbb\xbf1\n\x00  (\n2\n",        b'\x00\n{"amount":\n  100}',
+        b'\x00 {"amount": 100}',
+        b'\x00\n"s"\n-2.5\x0c{"k": "v"}\n[]',
+        b'\x00\n// c\n{\n  "amount": 100\n}',
+        b'\x00\ngarbage\n\x00{"amount": 100}\n',
+        b'\x00\ngarbage\x0c{"k": "v"}',
+        b'garbage\x0c[{"amount": 100, "payee": "x"}]',
+        b'\x1egarbage\x1e[{"amount": 100}]',
+    ],
+    ids=[
+        "bom-object-then-invalid-byte",
+        "utf16-then-odd-byte",
+        "form-feed-before-object",
+        "nbsp-before-object",
+        "rfc7464-sequence",
+        "u2028-separator",
+        "nel-separator",
+        "cr-inside-record",
+        "concatenated-scalar-then-object",
+        "scalar-line-then-pretty-object",
+        "jsonc-line-comment-header",
+        "jsonc-block-comment-header",
+        "xssi-prefix",
+        "xssi-prefix-comma",
+        "xssi-prefix-after-newline",
+        "trailing-comma-in-a-document",
+        "trailing-comma-in-a-document-after-a-scalar",
+        "utf16-object-line-python-text-mode-reads",
+        "invalid-byte-dropped-by-a-tolerant-decoder",
+        "utf16-object-line-nel-in-string",
+        "lone-cr-inside-a-record-lf-line-readers",
+        "jsonc-comment-runs-past-a-form-feed",
+        "jsonc-comment-runs-past-nel",
+        "whole-file-of-concatenated-values",
+        "utf16-record-with-a-lone-cr-decoded-lf-lines",
+        # U+020A is 0A 02 in UTF-16-LE: the raw split cuts inside it, the
+        # decoded LF/CR split cuts at the CR; only decoded LF lines read it
+        "utf16-record-cr-and-lf-byte-only-decoded-lf-lines",
+        # JavaScript's String.prototype.trim strips U+FEFF; JSON.parse then reads
+        "js-trim-strips-a-bom-after-a-space",
+        "comment-inside-a-concatenated-object",
+        "bom-inside-a-concatenated-object",
+        # str.splitlines line ends (Python `text.splitlines()`)
+        "splitlines-form-feed",
+        "splitlines-file-separator",
+        "splitlines-nel",
+        "splitlines-line-separator",
+        "splitlines-vertical-tab-records",
+        # an RFC 7464 reader that reads past a bad record
+        "rfc7464-bad-record-then-good-record",
+        "xssi-for-guard",
+        "xssi-while-guard",
+        # Java String.trim / PHP trim strip NUL
+        "nul-trimmed-line",
+        # a line of only NBSP is blank to a str.strip reader: every line reads
+        "nbsp-blank-line-between-scalars",
+        # integers past sys.get_int_max_str_digits(): json refused them, so
+        # the kind moved with the process-wide setting
+        "utf16-record-with-a-4301-digit-integer",
+        "utf16-4301-digit-scalar",
+        "form-feed-trimmed-record-with-a-4301-digit-integer",
+        "invalid-byte-dropped-record-with-a-4301-digit-integer",
+        # the middle line is blank to a reader that decodes it on its own
+        # (json.loads detects UTF-16-BE there), and the others read: the
+        # plain-UTF-8 body was opaque while its BOM twin was refused
+        "line-blank-in-its-own-encoding",
+        "line-blank-in-its-own-encoding-behind-a-bom",
+        # a NUL in the first two bytes makes json.loads detect UTF-16, and the
+        # text readers read that decode alone; a UTF-8 text reader (trimming
+        # NUL, or splitting lines) reads the object. Found grading loosenings
+        # with an independent stdlib reader (round 5)
+        "nul-then-pretty-printed-object",
+        "nul-then-object",
+        "nul-then-object-in-a-concatenated-document",
+        "nul-then-jsonc-document",
+        # round-5 claims audit: witnesses the line readers (3) and (4) must
+        # decide on the UTF-8 decode (the others above are decided by (2)/(5))
+        "nul-then-a-line-only-the-utf8-decode-reads",
+        "nul-then-a-splitlines-line-only-the-utf8-decode-reads",
+        # round-5 claims audit: (4) read objects only, so an array of records
+        # shrank the denominator (k:[].amount, k:[].payee -> one element)
+        "splitlines-array-of-objects",
+        "rfc7464-bad-record-then-array-of-objects",
+    ],
+)
+def test_what_a_json_family_reader_reads_is_never_opaque(tmp_path, raw):
+    """Issue 3 on v0.2.1: readers more lenient than `json.loads` pull an
+    object or array out of each of these, or read every line of it (a
+    tolerant decoder; trimming
+    whitespace, U+FEFF or NUL at a line's ends; str.splitlines line ends;
+    RFC 7464, also past a bad record; jq concatenation; JSONC comments and
+    trailing commas; XSSI guards; Python text-mode and LF-only line
+    readers; integers of any length), yet each was admitted as one opaque
+    element. The leniency is a DOCUMENT reading (the whole file is
+    JSON-family text); line by line the value must be one value in the
+    json-module grammar, trimmed at the ends. The declared limits are
+    `test_declared_limits_stay_opaque`."""
+    _refused_under_both(
+        tmp_path, raw, opaque_match="corrupt", structured_match="corrupt|duplicate|BOM"
+    )
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b"a,b,c\n1,2,3\n",
+        _BOM8 + b"a,b,c\n1,2,3\n",
+        "a UTF-16 prose note\nsecond line\n".encode("utf-16"),
+        b"; settings\nname = x\n[section]\nk = v\n",
+        b'2026-09-24 12:00:00 [INFO] started\n2026-09-24 12:00:01 [WARN] payload={"a":1}\n',
+        b"1 2 3\n4 5 6\n",
+        b"# Title\n- [ ] task\n- [x] done\nSee [link](http://x).\n",
+        b'# comment\nimport json\nx = {"a": 1}\n',
+        b"\x00",
+        b"export function F() {\n  return (\n    <div>\n      {/* Floating Trigger Button */}\n    </div>\n  );\n}\n",
+        b"void f() {\n  try { g(); }\n  catch (...)\n\t  { /* swallow the exception */ }\n}\n",
+        b"int main() {\n  {} // ignored\n  return 0;\n}\n",
+        b"int m[2][3] = {\n  [1, 2, 3] // first\n  [4, 5, 6] // last row\n};\n",
+        b"M = [\n    [1, 2, 3,],\n    [4, 5, 6,]\n]\nprint(M)\n",
+        b'/* tokens */\n[data-theme="dark"] { --x: 1; }\n',
+        b'// Copyright\n[assembly: AssemblyTitle("x")]\n',
+        b'status:\n  500 {"detail": "boom"}\n',
+        b"n  mean  ci\n10 0.63 [0.6005,0.6712]\n",
+        b"X\xd2\x11P\xab\x99\xe1Fh\x15r\r{}\x1d\xb2\\\x7fc\xe3u/\xfe",
+        b"garbage\n{}\n[]\n",
+        b'"' + b"[" * 2000,
+        b"0 {}\n1 []\n",
+        b"x\x0c[]\x0c{ }\x0c[x]\x0c1\x0c",
+        b"x\n" + b"[" * 1023 + b"1\n",
+        b'x\n["' + b"[" * 1100 + b'" x]\n',
+        b"?\x1d,\r[1]\x1e\x1dd[",
+        b"/|[\x0b[6]\x1c,{5",
+        b"\x7fELF\x02\x01\x1d\x0c\x00[1]\x03\x01\x0c\x003\x00",
+        b'garbage\x0c[1, "{", "x"]\x1e',
+    ],
+    ids=[
+        "csv",
+        "utf8-bom-csv",
+        "utf16-prose",
+        "ini-comment-first",
+        "log-with-embedded-json",
+        "numeric-table",
+        "markdown-checkboxes",
+        "python-source",
+        "lone-nul",
+        "jsx-comment-line",
+        "c-block-holding-a-comment",
+        "c-empty-block-then-comment",
+        "c-rows-with-trailing-comments",
+        "python-trailing-commas",
+        "css-comment-header-then-bracket",
+        "csharp-comment-then-attribute",
+        "report-status-line",
+        "results-table-with-interval",
+        "binary-with-empty-object-between-separators",
+        "empty-containers-beside-garbage",
+        "brackets-inside-an-unclosed-string",
+        "concatenated-values-holding-only-empty-containers",
+        "splitlines-lines-holding-no-member",
+        "nesting-one-level-short-of-the-cap",
+        # 1,100 '[' inside a string: counted as nesting, a mutant refused it
+        "brackets-inside-a-string-are-no-nesting",
+        # from a zip, a PNG and a shared library a first version of the
+        # str.splitlines reader refused (it read arrays on those lines)
+        "zip-bytes-with-1-between-separators",
+        "png-bytes-with-6-between-separators",
+        "so-bytes-with-1-between-c0-bytes",
+        # '{' and a quote only inside strings: no object, so not read by the
+        # str.splitlines reader (a mutant reading any such array survived)
+        "splitlines-array-whose-brace-is-in-a-string",
+    ],
+)
+def test_ordinary_artifacts_stay_opaque(tmp_path, raw):
+    """The false-refusal controls for the two tests above: widening what is
+    JSON-shaped must not refuse ordinary artifacts. A stream of scalars (a
+    numeric table) hides no field, an EMPTY object or array hides no field
+    (`{}` renders as the payload key alone, as an opaque element does), a
+    line is read as strict JSON (no comments, no trailing commas, no second
+    value: a first version of this fix read `{/* ... */}` in 132 of 306 .tsx
+    files as `{}` and refused them), a comment in front of a '[' does not
+    make CSS or C# JSON, and a BOM alone is not evidence. A body whose first
+    byte is '{' or '[' is still refused (an INI file that opens with a
+    section header)."""
+    _admitted_opaque(tmp_path, raw)
+
+
+@pytest.mark.parametrize("seed", [1, 2, 5])
+def test_random_binaries_stay_opaque(tmp_path, seed):
+    """High-entropy bytes (compressed or encrypted artifacts). The first
+    version of this fix refused 9 of 24 random 15 MiB bodies beyond the
+    parent's 2, reading `{}` / `[1]` out of short decoded rows."""
+    import random
+
+    raw = random.Random(seed).randbytes(256 * 1024)
+    assert raw[:1] not in (b"{", b"[")  # the first-byte rule is its own, older rule
+    _admitted_opaque(tmp_path, raw)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b"// c\n" + b'{"a": 1',
+        b"x\n{a: 1}\n",
+        b'x\n{"a": 1,}\n',
+        b'x\n0 {"a": 1}\n',
+        b'x\n{"a":\x0c1}\n',
+        b"\x1egarbage\n\x1e{\n  \"amount\": 100\n}\n",
+        b'1\n{\n  "amount": 100\n}\ngarbage\n',
+        b"garbage\x0c[100, 7]\x1e",
+        b'x\n#{"a": 1}\n',
+        b"x\n\x7f[1]\n",
+        b"x\n{'a': 1}\n",
+        b"x\n[0x1]\n",
+        b'x\n{"a": /*c*/ 1}\n',
+        b"garbage\n" + b"[" * 2000 + b"x",
+        b'garbage\x85{"a":1}',
+        b'garbage\x00{"a":1}\x00',
+        b"garbage\n" + b"[" * 2000 + b"u",
+    ],
+    ids=[
+        "truncated-jsonc-after-a-comment",
+        "json5-unquoted-key-line",
+        "trailing-comma-line-beside-garbage",
+        "concatenated-values-line-beside-garbage",
+        "form-feed-inside-a-value-beside-garbage",
+        "rfc7464-bad-record-then-multiline-record",
+        "valid-prefix-then-garbage",
+        "array-on-a-splitlines-line",
+        "a-prefix-other-than-the-three-xssi-guards",
+        "a-trim-of-another-character",
+        "json5-single-quotes",
+        "json5-hexadecimal-number",
+        "comment-on-one-line",
+        # past the cap, but no line reader parses text that cannot end as a
+        # value, and json.loads does not read it either
+        "nesting-past-the-cap-in-a-line-that-cannot-end-as-a-value",
+        # round-4 red team: plausible readers the statement now names as
+        # not modelled (C strings in binaries are NUL-delimited, and a NUL
+        # split would read JSON literals embedded in shared libraries)
+        "latin1-fallback-nel-line-end",
+        "nul-delimited-records",
+        # no literal ends in 'u': the value gate had it (round-5 claims audit)
+        "nesting-past-the-cap-in-a-line-ending-in-u",
+    ],
+)
+def test_declared_limits_stay_opaque(tmp_path, raw):
+    """What the evidence tests do NOT model, stated in the conventions
+    statement: readers that change the value grammar (JSON5), leniency on a
+    single line (comments, trailing commas, a second value, whitespace other
+    than JSON's inside a value), a value spanning several lines after a line
+    nothing reads, readers that stop at the first error, and truncated
+    JSONC, and an array on a line only the str.splitlines split makes (the
+    extra line ends and C0 bytes put `[1]` there in binaries by accident).
+    Pinned so that closing one is a deliberate change, not a drift."""
+    _admitted_opaque(tmp_path, raw)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b"x\n" + b"[" * 2000 + b"1]",
+        b"1 " + b"[" * 100_000 + b"1" + b"]" * 99_999,
+    ],
+    ids=["line-past-the-cap-past-depth-branch", "document-past-json-recursion"],
+)
+def test_nesting_past_the_scanner_cap_is_refused(tmp_path, raw):
+    """A value whose nesting reaches 1024 levels before its first syntax
+    error is read as JSON-shaped, by every refusal reader, without reading
+    further (it bounds the Python scanner's work on 15 MiB bracket runs).
+    Only refusal follows (the admission bound is 64). Nesting that sits
+    inside a string, or in a line that cannot start and end a value, is no
+    nesting: `brackets-inside-an-unclosed-string` and the deep-binary test
+    stay opaque."""
+    from audit_bundle.claimset import ClaimBytesKind, classify_kind
+
+    assert classify_kind(raw, "t")[0] is ClaimBytesKind.JSON_SHAPED_BUT_CORRUPT
+
+
+def test_a_cr_byte_inside_a_utf16_line_does_not_end_it(tmp_path):
+    """Found by the line-framing property: U+040D encodes as 0D 04 in
+    UTF-16-LE, so a split at CR cut the object line in two. A reader that
+    splits at LF only (the raw bytes, or the decoded text) reads it."""
+    raw = b"not json at all\n" + '{"\x80\u040d": null}'.encode("utf-16") + b"\n"
+    _refused_under_both(
+        tmp_path, raw, opaque_match="corrupt", structured_match="corrupt|duplicate|BOM"
+    )
+
+
+def _deep_bodies(depth):
+    """One body per refusal reader, each nesting `depth` levels in a text no
+    reader can finish: a line beside unreadable lines, a UTF-16 line, a
+    concatenated document, a document of objects, and a JSONC document."""
+    return {
+        "line": b"1\n1\x00\n" + b"[" * depth + b"1\x0c",
+        "utf16-line": ("garbage\n" + "[" * depth + "1").encode("utf-16"),
+        "document": b"1 " + b"[" * depth + b"x",
+        "object-document": b"0 " + b'{"a":' * depth + b"x",
+        "jsonc-document": b"// c\n" + b"[" * depth + b"x",
+        # a COMPLETE value nesting that deep, then an error: the scanner
+        # stops at the cap, before the error
+        "closed-value-then-garbage": b"0 " + b"[" * depth + b"1" + b"]" * depth + b" x",
+    }
+
+
+def _deep_bodies_small_stack(depth):
+    """`_deep_bodies` and the round-5 paths: the UTF-8 second decode and the
+    str.splitlines reader."""
+    return {
+        **_deep_bodies(depth),
+        "nul-led-utf8": b"\x00 " + b"[" * depth + b"1",
+        "splitlines-object": b"x\x0c" + b'{"a":' * depth + b"1" + b"}" * depth,
+    }
+
+
+@pytest.mark.parametrize("reader", sorted(_deep_bodies(1)))
+def test_nesting_to_the_cap_is_exact_on_every_reader(reader):
+    """Round-3 red team (F8) and claims audit (item 3): the cap ran only
+    where a scanner happened to run, so the same nesting was JSON-shaped in
+    UTF-8 and opaque in UTF-16, or after a comment and not before one. Every
+    refusal reader now answers as the capped scanner does: 1023 levels
+    before the first error stay opaque, 1024 are refused."""
+    from audit_bundle.claimset import ClaimBytesKind, classify_kind
+
+    assert classify_kind(_deep_bodies(1023)[reader], "t")[0] is ClaimBytesKind.NOT_JSON_SHAPED
+    assert (
+        classify_kind(_deep_bodies(1024)[reader], "t")[0]
+        is ClaimBytesKind.JSON_SHAPED_BUT_CORRUPT
+    )
+
+
+@pytest.mark.parametrize("depth", [2000, 9_900, 20_000])
+def test_the_kind_does_not_depend_on_the_callers_stack(depth):
+    """Round-3 red team (F6, F7) and claims audit (item 2): past 1024 levels
+    the refusal readers fell back to the scanner only when json ran out of
+    recursion budget, and that budget shrinks with the caller's C stack (and
+    is ~1000 on CPython 3.11, ~10000 on 3.12), so a body 9,900 deep was
+    opaque from a shallow caller and refused from a deep one. json's budget
+    no longer decides: the same kind from both."""
+    from audit_bundle.claimset import classify_kind
+
+    def from_deep_c_stack(n, fn):
+        return fn() if n == 0 else list(map(lambda _: from_deep_c_stack(n - 1, fn), [0]))[0]
+
+    for raw in _deep_bodies(depth).values():
+        shallow = classify_kind(raw, "t")[0]
+        deep = from_deep_c_stack(150, lambda: classify_kind(raw, "t")[0])
+        assert shallow is deep, raw[:20]
+
+
+def test_a_json_recursion_error_is_answered_by_the_scanner(monkeypatch):
+    """Where json runs out of recursion budget within `_JSON_DEPTH` (a caller
+    already near its limit), a RecursionError proves nothing about the text,
+    and the scanner answers, in the line reader and the document reader.
+    Simulated: json's decoder here raises RecursionError past 20 levels (a
+    real budget that low leaves too little for the caller as well). A mutant
+    taking every RecursionError as "read" refused the unclosed texts."""
+    from audit_bundle import claimset
+
+    class Shallow(json.JSONDecoder):
+        def raw_decode(self, s, idx=0):
+            if s.count("[", idx) >= 20:
+                raise RecursionError("simulated budget")
+            return super().raw_decode(s, idx)
+
+    monkeypatch.setattr(claimset, "_LIMITLESS", Shallow(parse_int=str))
+    calls = []
+    capped = claimset._capped_scan
+    monkeypatch.setattr(
+        claimset, "_capped_scan", lambda s, **kw: calls.append(1) or capped(s, **kw)
+    )
+    unclosed, closed = "[" * 30 + "1", "[" * 30 + "1" + "]" * 30
+    assert claimset._read_text(unclosed) is None
+    got = claimset._read_text(closed)
+    assert got is not None and got.container
+    assert claimset._reads_as_a_document("1 " + unclosed) is False
+    assert claimset._reads_as_a_document("1 " + closed) is True
+    assert len(calls) == 4  # the scanner answered each of the four
+
+
+@pytest.mark.parametrize("reader", sorted(_deep_bodies_small_stack(1)))
+def test_json_never_sees_nesting_past_the_cap_so_a_small_stack_survives(reader):
+    """Round-4 red team: the refusal readers handed json's C decoder text of
+    any depth and relied on RecursionError, which counts levels, not stack
+    bytes. On a thread with a 1 MiB stack, 9,000 levels ran off the C stack
+    and killed the process (SIGSEGV); v0.2.1 never gave json more than 64.
+    Round 5: 1,030 levels still overflow a 128 KiB stack (the musl/Alpine
+    thread default). Now json reads no deeper than 64 levels (the admission
+    bound); every reader path at 9,000 levels runs here on 128 KiB (measured
+    floor: 64 KiB on CPython 3.11-3.13). Run in a child process, so a
+    regression fails this test instead of killing the suite."""
+    import subprocess
+    import textwrap
+
+    code = textwrap.dedent(
+        f"""
+        import sys, threading
+        sys.path.insert(0, {str(Path(__file__).resolve().parents[1])!r})
+        from audit_bundle.claimset import classify_kind
+        from tests.test_claimset_opaque import _deep_bodies_small_stack
+        raw = _deep_bodies_small_stack(9000)[{reader!r}]
+        out = []
+        threading.stack_size(128 * 1024)
+        t = threading.Thread(target=lambda: out.append(classify_kind(raw, "t")[0].name))
+        t.start(); t.join()
+        print(out[0])
+        """
+    )
+    r = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True, text=True, timeout=300,
+        env={**__import__("os").environ, "PYTHONDONTWRITEBYTECODE": "1"},
+    )
+    assert r.returncode == 0, (r.returncode, r.stderr[-500:])
+    assert r.stdout.strip() == "JSON_SHAPED_BUT_CORRUPT"
+
+
+def test_the_oracle_has_no_cap():
+    """Round-3 claims audit (item 1) and red team (F1): the depth cap sat in
+    the scanner the ORACLE shares, so `stdlib_reads_as_json` said True for a
+    line json.loads can never read (`[` x 20000 then `x`) and the classifier,
+    rightly, admitted it: K5 failed against the named oracle. The oracle's
+    scanner is uncapped; it reads what json.loads would read with any
+    recursion budget."""
+    from audit_bundle.claimset import ClaimBytesKind, classify_kind, stdlib_reads_as_json
+
+    unreadable = b"1\n1\x00\n" + b"[" * 20_000 + b"x"
+    assert not stdlib_reads_as_json(unreadable)
+    assert classify_kind(unreadable, "t")[0] is ClaimBytesKind.NOT_JSON_SHAPED
+    assert stdlib_reads_as_json(b"[" * 20_000 + b"1" + b"]" * 20_000)
+    assert not stdlib_reads_as_json(b"[" * 20_000 + b"1" + b"]" * 19_999)
+
+
+@pytest.mark.parametrize("limit", [640, 0])
+def test_the_kind_does_not_depend_on_int_max_str_digits(limit):
+    """Round-3 red team (F4, F5): json refuses integers past
+    `sys.get_int_max_str_digits()`, a process-wide setting, so a record
+    holding a 700-digit integer was refused at the default and admitted
+    under 640, and one holding 4,301 digits the other way round. Integers
+    are kept as text now; the kinds hold under any setting."""
+    from audit_bundle.claimset import ClaimBytesKind, classify_kind, stdlib_reads_as_json
+
+    bodies = [
+        ('garbage\n{"amount": ' + "9" * n + "}\n").encode("utf-16") for n in (700, 4301)
+    ] + [("9" * 4301).encode("utf-16")]
+    before = sys.get_int_max_str_digits()
+    at_default = [(classify_kind(b, "t")[0], stdlib_reads_as_json(b)) for b in bodies]
+    try:
+        sys.set_int_max_str_digits(limit)
+        moved = [(classify_kind(b, "t")[0], stdlib_reads_as_json(b)) for b in bodies]
+    finally:
+        sys.set_int_max_str_digits(before)
+    assert moved == at_default
+    assert all(k is ClaimBytesKind.JSON_SHAPED_BUT_CORRUPT for k, _ in at_default)
+
+
+def test_trimming_is_linear():
+    """Round-3 red team (F2): `_trim` stripped whitespace and U+FEFF in
+    alternation, copying the text each round, and a body of alternating
+    spaces and U+FEFF ran past 120 s at 15 MiB (quadratic) while it could
+    be declared opaque. 8 MiB of it now classifies in well under a second
+    here; the bound below leaves two orders of magnitude of slack."""
+    import time
+
+    from audit_bundle.claimset import ClaimBytesKind, classify_kind
+
+    raw = (" \ufeff" * (2 * 1024 * 1024) + "x").encode()
+    t = time.perf_counter()
+    assert classify_kind(raw, "t")[0] is ClaimBytesKind.NOT_JSON_SHAPED
+    assert time.perf_counter() - t < 30
+
+
+def test_splitlines_object_lines_are_held_to_the_row_ceiling(monkeypatch):
+    """The str.splitlines reader reads only lines that open with '{' and a
+    key's quote and close with '}'; past the row ceiling of them it refuses,
+    so a body cannot spend unbounded parse time there."""
+    from audit_bundle import claimset
+    from audit_bundle.claimset import ClaimBytesKind, classify_kind
+
+    raw = b"x\x0c" + b'{"a" x}\x0c' * 5
+    assert classify_kind(raw, "t")[0] is ClaimBytesKind.NOT_JSON_SHAPED
+    monkeypatch.setattr(claimset, "_MAX_JSONL_ROWS", 4)
+    with pytest.raises(ClaimsetError, match="ceiling"):
+        classify_kind(raw, "t")
+
+
+def test_the_encoding_shortcut_is_json_detect_encoding():
+    """`_encoding` skips `json.detect_encoding` for bytes it knows are plain
+    UTF-8; over every first two bytes that matter and lengths 0-5 the two
+    agree."""
+    import itertools
+
+    from audit_bundle.claimset import _encoding
+
+    firsts = [0x00, 0x01, 0x0A, 0x20, 0x5B, 0x7B, 0xBB, 0xBF, 0xEF, 0xFE, 0xFF]
+    for n in range(6):
+        for combo in itertools.product(firsts, repeat=min(n, 4)):
+            b = bytes(combo) + b"x" * (n - len(combo))
+            assert _encoding(b) == json.detect_encoding(b), b
+
+
+def test_unicode_space_is_every_isspace_character():
+    """`_UNICODE_SPACE` is built from U+0000..U+3000 at import; no character
+    past U+3000 is whitespace to str.isspace (this interpreter's Unicode
+    database)."""
+    from audit_bundle.claimset import _UNICODE_SPACE
+
+    assert set(_UNICODE_SPACE) == {chr(c) for c in range(0x110000) if chr(c).isspace()}
+
+
 def test_csv_with_header_is_opaque(tmp_path):
     b = _write_bundle(tmp_path, {"payload/result.csv": _CSV})
     u = enumerate_claim_universe(
@@ -420,6 +1103,69 @@ def test_source_conventions_name_the_opaque_rule(tmp_path):
         opaque_claim_files={"artifact": "payload/a.bin"},
     )
     assert "opaque" in u["source"] and "root scalar" in u["source"]
+
+
+def test_source_conventions_name_the_evidence_tests(tmp_path):
+    """The statement rides universe_sha, so it is the receipt's claim. v2
+    said opaque bytes carry "no UTF BOM" while the classifier admitted
+    BOM-prefixed prose, and it named only two structural tests. v3 names
+    each evidence test, each limit and each structured refusal. (Phrase
+    presence only; the behaviour behind each phrase is pinned by the
+    witness and limit tests above.)"""
+    from audit_bundle.claimset import CLAIMSET_CONVENTIONS_VERSION
+
+    b = _write_bundle(tmp_path, {"payload/a.bin": _OPAQUE})
+    source = enumerate_claim_universe(
+        b,
+        bundle_id="x",
+        claim_files={},
+        manifest_files={"payload/a.bin": _sha(_OPAQUE)},
+        opaque_claim_files={"artifact": "payload/a.bin"},
+    )["source"]
+    assert CLAIMSET_CONVENTIONS_VERSION == "claimset-conventions/v3"
+    assert "no UTF BOM" not in source
+    for phrase in (
+        "integer tokens over 600 digits",
+        "not NFC",
+        "format (Cf) character",
+        "each line in its own detected encoding",
+        "as json.loads reads its UTF-8 bytes",
+        "split at LF only",
+        "C0 control characters",
+        "integers of any length",
+        "str.splitlines",
+        "an object or array holding a member",
+        "holding no member is not evidence",
+        "a UTF BOM alone is not evidence",
+        "whole-document reader",
+        "JSONC comments, trailing commas allowed",
+        "RFC 7464",
+        "XSSI guard",
+        "for(;;);",
+        "while(1);",
+        "nesting reaches 1024 levels before its first syntax error",
+        "parse only text that, trimmed, starts and ends as a JSON value can",
+        "check, by sampling,",
+        "not modelled",
+        "JSON5",
+        "leniency on one line",
+        "a value spanning several lines after a line nothing reads",
+        "an array holding no object on a line of the str.splitlines split",
+        "or as an array holding such an object",
+        "with invalid bytes dropped",
+        "a Latin-1 fallback, where byte 0x85 is NEL",
+        "also decoded as UTF-8",
+        "readers that stop at the first error",
+        "truncated JSONC",
+        "U+FEFF once decoded",
+        "does not read as one JSON value and has more than 1000000 non-blank lines",
+        "integer-digit and recursion limits lifted",
+        "stdlib_reads_as_json",
+    ):
+        assert phrase in source, phrase
+    # and the behaviour behind "a UTF BOM alone is not evidence"
+    (tmp_path / "prose").mkdir()
+    _admitted_opaque(tmp_path / "prose", "a UTF-16 prose note\n".encode("utf-16"))
 
 
 # ---------------------------------------------------------------------------
@@ -605,6 +1351,17 @@ def test_declared_paths_ride_universe_sha(tmp_path):
         '{"a":1,"b":2}'.encode("utf-32-be"),
         b'// comment\n{"a":1}',
         b'  [1, 2, 3',
+        'garbage\n{"x":1}\n'.encode("utf-16"),
+        'garbage\n{"x":1}\n'.encode("utf-16-le"),
+        'garbage\n{"x":1}\n'.encode("utf-32-be"),
+        '{"a":1,"b":2'.encode("utf-16"),
+        '{"a":1,"b":2'.encode("utf-16-le"),
+        '{"a":1,"b":2'.encode("utf-16") + b"x",
+        b"NaN",
+        b"1\n-Infinity\n",
+        b"9" * 700,
+        b"garbage\nNaN\n",
+        b"garbage\n" + b"9" * 700 + b"\n",
     ],
     ids=[
         "dup-key",
@@ -619,6 +1376,29 @@ def test_declared_paths_ride_universe_sha(tmp_path):
         "utf32-be-no-bom",
         "comment-then-object",
         "open-bracket-only",
+        # the jsonl-first-line-corrupt body re-encoded: its UTF-8 spelling was
+        # CORRUPT while these three were NOT_JSON_SHAPED (opaque-admissible),
+        # so an encoding changed the kind — found consolidating the classifier
+        "utf16-jsonl-first-line-corrupt",
+        "utf16-le-no-bom-jsonl-first-line-corrupt",
+        "utf32-be-no-bom-jsonl-first-line-corrupt",
+        # truncated JSON in UTF-16: only the decoded container-opener test
+        # sees it (nothing reads); a mutant dropping that test survived
+        "utf16-truncated",
+        "utf16-le-no-bom-truncated",
+        # an odd length does not decode: the first character is found by the
+        # replacement decode, and a mutant switching that path off survived
+        "utf16-truncated-odd-length",
+        # the strict parser's semantic refusals on a SCALAR body: no '{'/'['
+        # backs them up, so demoting them to "not JSON" made these opaque
+        # (the stdlib reader reads all three); a mutant doing that survived
+        "bare-nan",
+        "jsonl-scalar-infinity",
+        "oversized-int-scalar",
+        # the strict reader must still see a row after one that does not
+        # read: a mutant that skips bracket-less rows there survived
+        "nan-after-garbage",
+        "oversized-int-after-garbage",
     ],
 )
 def test_json_shaped_but_corrupt_is_refused_under_every_declaration(tmp_path, raw):
@@ -655,7 +1435,9 @@ def test_strict_json_past_the_depth_bound_is_refused_under_every_declaration(tmp
     them JSON_OVER_DEPTH, admitted nowhere."""
     from audit_bundle.claimset import ClaimBytesKind, classify_kind
 
-    assert classify_kind(raw, "t")[0] is ClaimBytesKind.JSON_OVER_DEPTH
+    # the kind, AND no documents: the scanner reads syntax only, so nothing
+    # it returns is a document (a mutant leaking its bytes as docs survived)
+    assert classify_kind(raw, "t") == (ClaimBytesKind.JSON_OVER_DEPTH, [])
     b = _write_bundle(tmp_path, {"payload/a.bin": raw})
     pins = {"payload/a.bin": _sha(raw)}
     with pytest.raises(ClaimsetError, match="depth"):
@@ -669,6 +1451,55 @@ def test_strict_json_past_the_depth_bound_is_refused_under_every_declaration(tmp
         )
 
 
+@pytest.mark.parametrize("deep", [False, True], ids=["within-depth", "past-depth"])
+def test_row_ceiling_refuses_on_both_depth_branches(tmp_path, monkeypatch, deep):
+    """The JSONL row ceiling refused a >ceiling body only when it was within
+    the depth bound: the past-depth branch skipped its line scan instead and
+    fell through to NOT_JSON_SHAPED, so ONE nested line turned a refused
+    object-per-line file into an admitted opaque element. Both branches now
+    refuse. The ceiling is shrunk to 4 so the case runs in milliseconds."""
+    from audit_bundle import claimset
+
+    monkeypatch.setattr(claimset, "_MAX_JSONL_ROWS", 4)
+    raw = b"garbage\n" + b'{"a":1}\n' * 5 + (b"[" * 70 + b"\n" if deep else b"")
+    b = _write_bundle(tmp_path, {"payload/a.bin": raw})
+    pins = {"payload/a.bin": _sha(raw)}
+    for decl in (
+        {"claim_files": {}, "opaque_claim_files": {"artifact": "payload/a.bin"}},
+        {"claim_files": {"artifact": "payload/a.bin"}},
+    ):
+        with pytest.raises(ClaimsetError, match="ceiling"):
+            enumerate_claim_universe(b, bundle_id="x", manifest_files=pins, **decl)
+
+
+@pytest.mark.parametrize("depth", [9_990, 100_000], ids=["near-threshold", "far-past"])
+def test_depth_hidden_by_an_unbalanced_quote_never_reaches_the_parser(tmp_path, depth):
+    """`admit_bytes` carries string state across lines, so the unbalanced
+    quote on line 1 hid line 2's brackets from the whole-body depth scan and
+    line 2 went to the recursive parser: RecursionError out of the classifier
+    (a crash-class ERROR on the verdict, not a REJECT), at a threshold that
+    moved with the caller's stack depth. The strict reader now bounds depth
+    per value: a clean refusal, the same kind at any stack depth."""
+    from audit_bundle.claimset import ClaimBytesKind, classify_kind
+
+    raw = b'"\n' + b"[" * depth + b"]" * depth
+
+    def at_stack_depth(n):
+        return at_stack_depth(n - 1) if n else classify_kind(raw, "t")
+
+    corrupt = (ClaimBytesKind.JSON_SHAPED_BUT_CORRUPT, [])
+    assert classify_kind(raw, "t") == corrupt
+    assert at_stack_depth(400) == corrupt
+    b = _write_bundle(tmp_path, {"payload/a.bin": raw})
+    pins = {"payload/a.bin": _sha(raw)}
+    for decl in (
+        {"claim_files": {}, "opaque_claim_files": {"artifact": "payload/a.bin"}},
+        {"claim_files": {"artifact": "payload/a.bin"}},
+    ):
+        with pytest.raises(ClaimsetError, match="corrupt"):
+            enumerate_claim_universe(b, bundle_id="x", manifest_files=pins, **decl)
+
+
 def test_deep_unbalanced_binary_is_still_opaque(tmp_path):
     """The false-refusal the depth-as-classifier rule exists to avoid: honest
     binary with >64 unbalanced openers is NOT JSON and must enumerate."""
@@ -679,6 +1510,19 @@ def test_deep_unbalanced_binary_is_still_opaque(tmp_path):
         opaque_claim_files={"artifact": "payload/a.bin"},
     )
     assert u["elements"] == ["artifact"]
+
+
+def test_a_form_feed_line_is_blank_to_the_structured_reader():
+    """The strict reader reads LINES when the body does not read whole; a line
+    that bytes.strip() empties (a form feed) is blank, so one object line
+    after it is JSONL. (Behaviour pin. `_json_body`'s one-line shortcut
+    compares exact bytes; widening it to JSON-whitespace-stripped bytes is
+    an equivalent mutant for the two readers that use it, which ignore JSON
+    whitespace and detect no encoding. It matters for an encoding-detecting
+    reader, and `_looks_json_shaped` keeps its own exact comparison.)"""
+    from audit_bundle.claimset import ClaimBytesKind, classify_kind
+
+    assert classify_kind(b'\x0c\n{"a": 1}\n', "t") == (ClaimBytesKind.JSONL, [{"a": 1}])
 
 
 def test_hollow_is_a_kind_and_is_refused_everywhere(tmp_path):

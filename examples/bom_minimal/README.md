@@ -1,5 +1,11 @@
 # bom_minimal — Supply-Chain BOM Audit Bundle
 
+> **Legacy front door, not evidence.** This pilot's `verify.py` predates the anchored CLI:
+> its check runs the pilot's own re-derivation plugin against an unanchored spec. A PASS
+> here does not show that the claimed output re-derives from the committed inputs; the
+> anchored command in the root README, with the spec, primitives and work-set held outside
+> the bundle, is. The pilot stays until it is migrated.
+
 Domain pilot: deterministic package dependency resolution bundled for V-kernel
 audit verification (the audit-bundle contract §C5, C6, C9).
 

@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
@@ -66,11 +67,15 @@ _ALL_CHANNELS = (VERTICAL, PITCH, ROLL, SPLIT)
 # `mass_kg` is in this subset, so that attack still fails closed.
 #
 # What it does NOT close: the diagonal (cross-weight) mode -- see
-# `_assert_physically_admissible` and the README. In production a fleet or
-# engineering authority would sign each CURRENT snapshot of these fields and the
-# verifier would validate that signature under an out-of-band key, rather than
-# trust a build-time constant that says nothing about whether the spec is still
-# current for the vehicle it names.
+# `_assert_physically_admissible` and the README.
+#
+# WHOSE digest: the auditor's. It is the declared input `rigid_body_sha256` in the
+# auditor's anchored spec (the declared-inputs contract, REASON_CODES.md UNKNOWN_SPEC_PARAM / MISSING_SPEC_PARAM), not a constant of
+# this module: a ROOT (whose vehicle data counts) is stated by the party relying on
+# it. In production a fleet or engineering authority would sign each CURRENT
+# snapshot of these fields and the auditor would take the digest from that
+# signature, rather than state one that says nothing about whether the spec is
+# still current for the vehicle it names.
 RIGID_BODY_SPEC_FIELDS = (
     "cg_height_m",
     "cg_to_front_axle_m",
@@ -81,9 +86,103 @@ RIGID_BODY_SPEC_FIELDS = (
     "vehicle_id",
 )
 
-TRUSTED_RIGID_BODY_SPEC_SHA256 = (
-    "fb0adc64f37d41d0e6f5a65fdd58c908ceaa641e91d0b54bf003b23b6b7bfbd4"
+
+# --- declared inputs (the declared-inputs contract, REASON_CODES.md UNKNOWN_SPEC_PARAM / MISSING_SPEC_PARAM) -------------------------
+# The auditor's roots and demands are NOT constants of this module. Each is a
+# binding param in the auditor's anchored spec; dispatch refuses a binding that
+# omits one (MISSING_SPEC_PARAM) or carries a key nobody reads (UNKNOWN_SPEC_PARAM),
+# and hands each primitive only the keys it declares in `expects`:
+#
+#   rigid_body_sha256   ROOT    digest of RIGID_BODY_SPEC_FIELDS the auditor holds
+#   split_reference     ROOT    the calibrated front-share table, |ay| -> share
+#                               (somebody's calibration -- see channel 4's header)
+#   min_transfer_n      DEMAND  the lateral-transfer floor below which a sample is
+#                               not judged by the split channel (a noise floor the
+#                               auditor chooses; newtons, decimal string)
+#   min_gated_fraction  DEMAND  the share of the trip the split channel must judge
+#                               to carry a trip-level verdict (a policy line)
+#
+# Values that must be exact are decimal STRINGS, read with Fraction.
+_SHA256_HEX = re.compile(r"[0-9a-f]{64}")
+CHANNEL_EXPECTS = frozenset({"rigid_body_sha256"})
+SPLIT_EXPECTS = frozenset(
+    {"rigid_body_sha256", "split_reference", "min_transfer_n", "min_gated_fraction"}
 )
+
+
+# A plain decimal or a ratio of two integers, bounded: no exponent form, because
+# Fraction("1e50000000") builds a 50-million-digit integer (measured: > 60 s).
+_EXACT_FORM = re.compile(r"-?[0-9]{1,40}(\.[0-9]{1,40})?|[0-9]{1,40}/[0-9]{1,40}")
+
+
+def _exact(value: object, name: str) -> Fraction:
+    if isinstance(value, bool) or not isinstance(value, str):
+        raise ValueError(f"{name} must be a decimal string, got {type(value).__name__}")
+    if not _EXACT_FORM.fullmatch(value):
+        raise ValueError(f"{name}: {value[:50]!r} is not a plain decimal or integer ratio")
+    try:
+        return Fraction(value)
+    except (ValueError, ZeroDivisionError) as exc:
+        raise ValueError(f"{name}: not an exact decimal ({exc})") from None
+
+
+def pins_from_params(params: dict, keys) -> dict:
+    """Validate the declared inputs named in `keys` out of the binding params.
+    Raises ValueError on a malformed value; a missing key is refused upstream by
+    dispatch and again here."""
+    pins: dict = {}
+    for key in keys:
+        if key not in params:
+            raise ValueError(f"declared input {key!r} is not stated; there is no default")
+    if "rigid_body_sha256" in keys:
+        v = params["rigid_body_sha256"]
+        if not isinstance(v, str) or not _SHA256_HEX.fullmatch(v):
+            raise ValueError("rigid_body_sha256 must be a lowercase sha256 hex digest")
+        pins["rigid_body_sha256"] = v
+    if "split_reference" in keys:
+        ref = params["split_reference"]
+        if not isinstance(ref, dict) or not ref:
+            raise ValueError("split_reference must be a non-empty object |ay| -> share")
+        table: dict = {}
+        for k, v in ref.items():
+            ay = _exact(k, f"split_reference key {k!r}")
+            if ay < 0 or ay in table:
+                raise ValueError(f"split_reference key {k!r} is negative or repeats a key")
+            table[ay] = _exact(v, f"split_reference[{k!r}]")
+        pins["split_reference"] = table
+    if "min_transfer_n" in keys:
+        v = _exact(params["min_transfer_n"], "min_transfer_n")
+        if v <= 0:
+            raise ValueError("min_transfer_n must be > 0")
+        pins["min_transfer_n"] = v
+    if "min_gated_fraction" in keys:
+        v = _exact(params["min_gated_fraction"], "min_gated_fraction")
+        if not 0 < v <= 1:
+            raise ValueError("min_gated_fraction must be in (0, 1]")
+        pins["min_gated_fraction"] = v
+    return pins
+
+
+def _declared(pack_section: dict, keys) -> dict:
+    """pins_from_params for the dispatch path: a malformed declared value is the
+    AUDITOR's instruction being wrong, reported through the declared refusal class
+    (exit 2), never a builtin ValueError that would read as a REJECT of the bundle."""
+    from audit_bundle.plugin import DeclaredInputMalformed  # noqa: PLC0415
+
+    try:
+        return pins_from_params(pack_section.get("params") or {}, keys)
+    except ValueError as exc:
+        raise DeclaredInputMalformed(str(exc)) from None
+
+
+def pins_from_spec(spec_path: Path, type_key: str) -> dict:
+    """The declared inputs as the AUDITOR's spec states them for `type_key`. For the
+    auditor's own tools and tests; the primitive never reads a spec file, it gets
+    its params from dispatch."""
+    doc = json.loads(Path(spec_path).read_bytes())
+    params = doc["types"][type_key]["comparator"]["params"]
+    keys = SPLIT_EXPECTS if type_key == SPLIT else CHANNEL_EXPECTS
+    return pins_from_params(params, keys)
 
 
 def _rigid_body_digest(vehicle: dict) -> str:
@@ -139,7 +238,7 @@ class CheckStats:
     samples: int = 0
 
 
-def _load_exact(bundle_dir: Path) -> tuple:
+def _load_exact(bundle_dir: Path, pins: dict) -> tuple:
     vehicle_path = bundle_dir / "inputs" / "vehicle_spec.json"
     samples_path = bundle_dir / "inputs" / "trip_samples.json"
     loads_path = bundle_dir / "payload" / "corner_loads.json"
@@ -153,11 +252,11 @@ def _load_exact(bundle_dir: Path) -> tuple:
     # is the one bundle input checkable against a verifier-held reference
     # rather than only against itself.
     actual_sha = _rigid_body_digest(vehicle)
-    if actual_sha != TRUSTED_RIGID_BODY_SPEC_SHA256:
+    if actual_sha != pins["rigid_body_sha256"]:
         raise ValueError(
             f"inputs/vehicle_spec.json rigid-body fields digest {actual_sha} "
             f"does not match the verifier-pinned "
-            f"{TRUSTED_RIGID_BODY_SPEC_SHA256} -- a vehicle spec that differs "
+            f"{pins['rigid_body_sha256']} -- a vehicle spec that differs "
             f"from the auditor's held reference is refused rather than trusted, "
             f"because a consistent scale-up of the published loads AND the "
             f"vehicle mass leaves every equilibrium residual inside epsilon and "
@@ -180,7 +279,7 @@ def _load_exact(bundle_dir: Path) -> tuple:
 
 
 def max_abs_residual(
-    bundle_dir: Path, channel: str, stats: CheckStats | None = None
+    bundle_dir: Path, channel: str, stats: CheckStats | None = None, *, pins: dict
 ) -> tuple:
     """Return (max |residual| as Fraction, index of the worst sample).
 
@@ -191,7 +290,7 @@ def max_abs_residual(
     if channel not in _CHANNELS:
         raise ValueError(f"unknown residual channel {channel!r}; known: {_CHANNELS!r}")
     stats = stats if stats is not None else CheckStats()
-    vehicle, samples, loads = _load_exact(bundle_dir)
+    vehicle, samples, loads = _load_exact(bundle_dir, pins)
 
     # Rigid-body geometry only. Deliberately no roll-stiffness / tire terms.
     m = Fraction(vehicle["mass_kg"])
@@ -240,7 +339,7 @@ def max_abs_residual(
 # loads are physically realisable, and any set that is not fails against laws
 # nobody has to vouch for. This channel asks a different question -- whether the
 # published loads AGREE WITH A REFERENCE -- and to ask it the auditor must hold
-# a calibration that somebody produced. Here that is `_SPLIT_REFERENCE`, swept
+# a calibration that somebody produced. Here that is `split_reference`, swept
 # offline across the |ay| envelope from the reference solve. In deployment it
 # would come from the producer's own high-fidelity solve on their cluster.
 #
@@ -267,9 +366,9 @@ def max_abs_residual(
 #     establishing that a model is accurate.
 #   * CONDITIONING. The share is a ratio whose denominator is the total lateral
 #     transfer, so it is meaningless in a straight line: at |t| = 0.018 N one
-#     sample's measured share was -24.39. `_MIN_TRANSFER_N` gates it out. The
-#     gate is a threshold on a NOISE floor, not a physical constant.
-_MIN_TRANSFER_N = Fraction(1000)
+#     sample's measured share was -24.39. the declared input `min_transfer_n`
+#     gates it out. The gate is a threshold on a NOISE floor, not a physical
+#     constant, which is why the auditor states it (committed spec: 1000 N).
 
 # NOTE: the auditor's tolerance on the share is NOT here. It travels as the
 # comparator epsilon in the anchored spec, exactly like the three residual
@@ -292,139 +391,27 @@ _MIN_TRANSFER_N = Fraction(1000)
 # refused that honest bundle, which is how the width was caught. Beyond the
 # physically reachable range there is nothing to calibrate and refusal is right:
 # the 18,142 N one-wheel forgery implies |ay| = 14.09.
-_SPLIT_REFERENCE = {
-    "0.1": "0.581584",
-    "0.2": "0.583167",
-    "0.3": "0.584751",
-    "0.4": "0.586334",
-    "0.5": "0.587917",
-    "0.6": "0.589499",
-    "0.7": "0.591081",
-    "0.8": "0.592662",
-    "0.9": "0.594242",
-    "1": "0.595822",
-    "1.1": "0.597400",
-    "1.2": "0.598978",
-    "1.3": "0.600554",
-    "1.4": "0.602130",
-    "1.5": "0.603704",
-    "1.6": "0.605276",
-    "1.7": "0.606848",
-    "1.8": "0.608417",
-    "1.9": "0.609986",
-    "2": "0.611552",
-    "2.1": "0.613117",
-    "2.2": "0.614679",
-    "2.3": "0.616240",
-    "2.4": "0.617799",
-    "2.5": "0.619356",
-    "2.6": "0.620910",
-    "2.7": "0.622463",
-    "2.8": "0.624013",
-    "2.9": "0.625560",
-    "3": "0.627105",
-    "3.1": "0.628648",
-    "3.2": "0.630188",
-    "3.3": "0.631725",
-    "3.4": "0.633259",
-    "3.5": "0.634791",
-    "3.6": "0.636320",
-    "3.7": "0.637846",
-    "3.8": "0.639369",
-    "3.9": "0.640888",
-    "4": "0.642405",
-    "4.1": "0.643918",
-    "4.2": "0.645429",
-    "4.3": "0.646935",
-    "4.4": "0.648439",
-    "4.5": "0.649939",
-    "4.6": "0.651436",
-    "4.7": "0.652929",
-    "4.8": "0.654419",
-    "4.9": "0.655905",
-    "5": "0.657387",
-    "5.1": "0.658866",
-    "5.2": "0.660340",
-    "5.3": "0.661812",
-    "5.4": "0.663279",
-    "5.5": "0.664742",
-    "5.6": "0.666202",
-    "5.7": "0.667658",
-    "5.8": "0.669110",
-    "5.9": "0.670557",
-    "6": "0.672001",
-    "6.1": "0.673441",
-    "6.2": "0.674876",
-    "6.3": "0.676308",
-    "6.4": "0.677735",
-    "6.5": "0.679158",
-    "6.6": "0.680577",
-    "6.7": "0.681992",
-    "6.8": "0.683403",
-    "6.9": "0.684809",
-    "7": "0.686211",
-    "7.1": "0.687609",
-    "7.2": "0.689002",
-    "7.3": "0.690391",
-    "7.4": "0.691776",
-    "7.5": "0.693157",
-    "7.6": "0.694533",
-    "7.7": "0.695905",
-    "7.8": "0.697272",
-    "7.9": "0.698635",
-    "8": "0.699994",
-    "8.1": "0.701348",
-    "8.2": "0.702698",
-    "8.3": "0.704043",
-    "8.4": "0.705384",
-    "8.5": "0.706721",
-    "8.6": "0.708053",
-    "8.7": "0.709381",
-    "8.8": "0.710704",
-    "8.9": "0.712023",
-    "9": "0.713337",
-    "9.1": "0.714647",
-    "9.2": "0.715953",
-    "9.3": "0.717254",
-    "9.4": "0.718551",
-    "9.5": "0.719843",
-    "9.6": "0.721131",
-    "9.7": "0.722414",
-    "9.8": "0.723694",
-    "9.9": "0.724968",
-    "10": "0.726239",
-}
+# The table is the declared input `split_reference` in the auditor's spec (a ROOT:
+# the calibration somebody produced). The committed spec carries the sweep verbatim
+# from its first cut: |ay| 0.1 .. 10.0 in 0.1 steps.
 
 
-def _reference_split(abs_ay: Fraction) -> Fraction | None:
-    """Calibrated reference share at |ay|, or None if outside the envelope."""
-    best_key = None
-    for key in _SPLIT_REFERENCE:
-        k = Fraction(key)
-        if k <= abs_ay and (best_key is None or k > best_key):
-            best_key = k
-    if best_key is None:
+def _reference_split(abs_ay: Fraction, table: dict) -> Fraction | None:
+    """Calibrated reference share at |ay| (floored to the nearest key at or below),
+    or None outside the envelope. `table` is the validated `split_reference`."""
+    below = [k for k in table if k <= abs_ay]
+    if not below or abs_ay > max(table):
         return None
-    hi = max(Fraction(k) for k in _SPLIT_REFERENCE)
-    if abs_ay > hi:
-        return None
-    return Fraction(_SPLIT_REFERENCE[_fmt_key(best_key)])
-
-
-def _fmt_key(k: Fraction) -> str:
-    for key in _SPLIT_REFERENCE:
-        if Fraction(key) == k:
-            return key
-    raise KeyError(k)
+    return table[max(below)]
 
 
 def max_split_deviation(
-    bundle_dir: Path, stats: CheckStats | None = None
+    bundle_dir: Path, stats: CheckStats | None = None, *, pins: dict
 ) -> tuple:
     """Return (max |published share - reference share|, worst index).
 
     Maximised over samples whose total lateral transfer clears
-    `_MIN_TRANSFER_N`. The auditor's tolerance is applied by the comparator, not
+    `min_transfer_n`. The auditor's tolerance is applied by the comparator, not
     here.
 
     Samples outside the calibrated |ay| envelope are SKIPPED, not passed: they
@@ -435,7 +422,8 @@ def max_split_deviation(
     samples actually carried the check.
     """
     stats = stats if stats is not None else CheckStats()
-    vehicle, samples, loads = _load_exact(bundle_dir)
+    vehicle, samples, loads = _load_exact(bundle_dir, pins)
+    floor, table = pins["min_transfer_n"], pins["split_reference"]
     m = Fraction(vehicle["mass_kg"])
     t = Fraction(vehicle["track_width_m"])
     h = Fraction(vehicle["cg_height_m"])
@@ -452,10 +440,10 @@ def max_split_deviation(
             magnitude = -total
         else:
             magnitude = total
-        if magnitude < _MIN_TRANSFER_N:
+        if magnitude < floor:
             continue
         ay = Fraction(str(sample["ay_mps2"]))
-        reference = _reference_split(-ay if ay < 0 else ay)
+        reference = _reference_split(-ay if ay < 0 else ay, table)
         if reference is None:
             continue
         share = front / total
@@ -494,21 +482,22 @@ def max_split_deviation(
 # the honest bundle clears it with 94 of 120 (78%). A genuinely gentle real trip
 # could fall below and be refused -- that is a COULD-NOT-CONCLUDE, which is the
 # correct answer for a trip that cannot carry the check, not a false accusation.
-_MIN_GATED_FRACTION = Fraction(1, 2)
+# The floor is the declared input `min_gated_fraction` (committed spec: 1/2).
 
 
-def split_coverage(bundle_dir: Path) -> dict:
+def split_coverage(bundle_dir: Path, *, pins: dict) -> dict:
     """Account for EVERY sample by why the split channel did or did not judge it."""
-    vehicle, samples, loads = _load_exact(bundle_dir)
+    vehicle, samples, loads = _load_exact(bundle_dir, pins)
+    floor, table = pins["min_transfer_n"], pins["split_reference"]
     gated = below_floor = above_envelope = 0
     for sample, corners in zip(samples, loads):
         fl, fr, rl, rr = (Fraction(str(v)) for v in corners)
         total = (fr - fl) + (rr - rl)
-        if (total if total >= 0 else -total) < _MIN_TRANSFER_N:
+        if (total if total >= 0 else -total) < floor:
             below_floor += 1
             continue
         ay = Fraction(str(sample["ay_mps2"]))
-        if _reference_split(-ay if ay < 0 else ay) is None:
+        if _reference_split(-ay if ay < 0 else ay, table) is None:
             above_envelope += 1
             continue
         gated += 1
@@ -520,9 +509,9 @@ def split_coverage(bundle_dir: Path) -> dict:
     }
 
 
-def gated_sample_count(bundle_dir: Path) -> int:
+def gated_sample_count(bundle_dir: Path, *, pins: dict) -> int:
     """How many samples the split channel actually evaluated."""
-    return split_coverage(bundle_dir)["gated"]
+    return split_coverage(bundle_dir, pins=pins)["gated"]
 
 
 class _ChannelResidualPrimitive:
@@ -539,6 +528,7 @@ class _ChannelResidualPrimitive:
     """
 
     channel: str = ""
+    expects: frozenset[str] = CHANNEL_EXPECTS
 
     def _certificate(self, inputs, pack_section: dict):
         from audit_bundle.plugin import RecomputedValue  # noqa: PLC0415
@@ -551,8 +541,11 @@ class _ChannelResidualPrimitive:
                 f"-- a mis-bound spec fails closed rather than checking the "
                 f"wrong quantity"
             )
+        pins = _declared(pack_section, self.expects)
         stats = CheckStats()
-        worst, worst_index = max_abs_residual(inputs.bundle_dir, self.channel, stats)
+        worst, worst_index = max_abs_residual(
+            inputs.bundle_dir, self.channel, stats, pins=pins
+        )
         return RecomputedValue(
             value={
                 "kind": "rational",
@@ -578,6 +571,7 @@ class VerticalResidualRecompute(_ChannelResidualPrimitive):
     """Sum of the four published loads against m*g. Newtons."""
 
     primitive_id: str = "corner_load_vertical_residual_recompute"
+    expects: frozenset[str] = CHANNEL_EXPECTS  # restated: this class defines its own recompute
     channel: str = VERTICAL
 
     def recompute(self, inputs, pack_section: dict):
@@ -588,6 +582,7 @@ class PitchResidualRecompute(_ChannelResidualPrimitive):
     """Longitudinal moment balance about the CG. Newton-metres."""
 
     primitive_id: str = "corner_load_pitch_residual_recompute"
+    expects: frozenset[str] = CHANNEL_EXPECTS  # restated: this class defines its own recompute
     channel: str = PITCH
 
     def recompute(self, inputs, pack_section: dict):
@@ -598,6 +593,7 @@ class RollResidualRecompute(_ChannelResidualPrimitive):
     """Lateral moment balance about the CG. Newton-metres."""
 
     primitive_id: str = "corner_load_roll_residual_recompute"
+    expects: frozenset[str] = CHANNEL_EXPECTS  # restated: this class defines its own recompute
     channel: str = ROLL
 
     def recompute(self, inputs, pack_section: dict):
@@ -623,6 +619,7 @@ class TransferSplitRecompute:
 
     primitive_id: str = "corner_load_transfer_split_recompute"
     channel: str = SPLIT
+    expects: frozenset[str] = SPLIT_EXPECTS
 
     def recompute(self, inputs, pack_section: dict):
         from audit_bundle.plugin import RecomputedValue  # noqa: PLC0415
@@ -635,9 +632,11 @@ class TransferSplitRecompute:
                 f"-- a mis-bound spec fails closed rather than checking the "
                 f"wrong quantity"
             )
+        pins = _declared(pack_section, self.expects)
         stats = CheckStats()
-        worst, worst_index = max_split_deviation(inputs.bundle_dir, stats)
-        coverage = split_coverage(inputs.bundle_dir)
+        worst, worst_index = max_split_deviation(inputs.bundle_dir, stats, pins=pins)
+        coverage = split_coverage(inputs.bundle_dir, pins=pins)
+        min_gated = pins["min_gated_fraction"]
         gated = coverage["gated"]
         if coverage["above_envelope"]:
             raise ValueError(
@@ -648,14 +647,12 @@ class TransferSplitRecompute:
                 f"refused rather than skipped -- skipping it would let a producer "
                 f"switch the channel off by driving out of range"
             )
-        if gated * _MIN_GATED_FRACTION.denominator < (
-            coverage["total"] * _MIN_GATED_FRACTION.numerator
-        ):
+        if gated * min_gated.denominator < (coverage["total"] * min_gated.numerator):
             raise ValueError(
                 f"the transfer-split check judged only {gated} of "
                 f"{coverage['total']} sample(s) "
                 f"({coverage['below_floor']} below the lateral-transfer floor); "
-                f"that is under the {_MIN_GATED_FRACTION} coverage floor, so this "
+                f"that is under the {min_gated} coverage floor, so this "
                 f"trip cannot carry a trip-level verdict on the split. Could not "
                 f"conclude -- not an agreement"
             )

@@ -106,6 +106,7 @@ class CreditScoringRecompute:
     """Verifier-side primitive for re-deriving the per-applicant verdict list."""
 
     primitive_id: str = "credit_scoring_recompute"
+    expects = frozenset()  # declared inputs: this primitive reads no binding param
 
     def recompute(self, inputs, pack_section: dict):
         """Recompute the verdict list from model/scorecard.json,

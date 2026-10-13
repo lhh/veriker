@@ -74,6 +74,7 @@ from equilibrium_residual_recompute import (  # noqa: E402
     CheckStats,
     _load_exact,
     max_abs_residual,
+    pins_from_spec,
 )
 
 _CHANNEL_UNITS = {VERTICAL: "N", PITCH: "N*m", ROLL: "N*m"}
@@ -95,7 +96,7 @@ def _epsilons() -> dict:
 
 def _per_sample_residuals(bundle_dir: Path):
     """Yield (index, sample, {channel: exact residual}) for the whole trip."""
-    vehicle, samples, loads = _load_exact(bundle_dir)
+    vehicle, samples, loads = _load_exact(bundle_dir, pins_from_spec(_SPEC_PATH, VERTICAL))
     m = Fraction(vehicle["mass_kg"])
     g = Fraction(vehicle["gravity_mps2"])
     a = Fraction(vehicle["cg_to_front_axle_m"])
@@ -200,7 +201,9 @@ def audit_cost(bundle_dir: Path, *, authority: MiningAuthority | None = None) ->
     stats = CheckStats()
     worst = {}
     for channel in (VERTICAL, PITCH, ROLL):
-        value, index = max_abs_residual(bundle_dir, channel, stats)
+        value, index = max_abs_residual(
+            bundle_dir, channel, stats, pins=pins_from_spec(_SPEC_PATH, channel)
+        )
         worst[channel] = {"residual": float(value), "sample_index": index}
     return {"worst": worst, "auditor_ops": stats.ops}
 

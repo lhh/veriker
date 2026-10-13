@@ -104,6 +104,7 @@ class ClimateAttributionRecompute:
     """Verifier-side primitive re-deriving the per-vendor attribution list."""
 
     primitive_id: str = "climate_attribution_recompute"
+    expects = frozenset()  # declared inputs: this primitive reads no binding param
 
     def recompute(self, inputs, pack_section: dict):
         """Recompute the attribution list from inputs/supplier_chain.json.

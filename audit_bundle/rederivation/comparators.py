@@ -152,8 +152,24 @@ _NUMERIC_MODELS: frozenset[str] = frozenset(
 
 def _cmp_scalar_epsilon(a: object, b: object, params: dict) -> tuple[bool, str]:
     try:
-        epsilon = float(params["epsilon"])
-    except (KeyError, TypeError, ValueError, OverflowError) as exc:
+        raw_epsilon = params["epsilon"]
+    except (KeyError, TypeError) as exc:
+        return (False, f"scalar_epsilon: bad/missing epsilon param: {exc!r}")
+    # TYPED, not coerced (One F U19 census §2.1.4): float() read `true` as 1.0
+    # -- a tolerance the auditor never wrote -- and admitted a numeric STRING.
+    # The epsilon must be a JSON number: int or float, never bool (a bool IS
+    # an int in Python, so it is excluded by name), str, or anything else.
+    # Same refusal as a missing epsilon, matching validate_comparator_params.
+    if isinstance(raw_epsilon, bool) or not isinstance(raw_epsilon, (int, float)):
+        return (
+            False,
+            "scalar_epsilon: bad/missing epsilon param: epsilon must be a JSON "
+            f"number (int or float, not bool), got {type(raw_epsilon).__name__} "
+            f"{raw_epsilon!r}",
+        )
+    try:
+        epsilon = float(raw_epsilon)
+    except OverflowError as exc:  # huge int: not float-representable -- refuse
         return (False, f"scalar_epsilon: bad/missing epsilon param: {exc}")
     # Defence-in-depth: dispatch validates epsilon at parse time, but re-check
     # here so this comparator is sound in isolation — a non-finite epsilon (inf)
@@ -713,6 +729,37 @@ _COMPARATOR_REGISTRY: dict[str, Comparator] = {
 }
 
 
+# The params keys each comparator kind READS in its `_cmp_*` function — not keys it only
+# validates. Dispatch refuses any binding param outside
+# `comparator_param_keys(kind) | primitive.expects | primitive.expects_optional`
+# (UNKNOWN_SPEC_PARAM): a key nobody reads is an instruction the auditor believes is
+# enforced and is not. `input_anchor` is NOT here although the band kinds validate it
+# (as the precondition of `conditioning_bound`): only a primitive that declares it reads
+# it. `numeric_model` is documentary and only `scalar_epsilon` puts it on the verdict.
+# tests/test_declared_inputs.py derives each kind's reads from its source and checks
+# the two sets are EQUAL.
+_COMPARATOR_PARAM_KEYS: dict[str, frozenset[str]] = {
+    "scalar_epsilon": frozenset({"epsilon", "numeric_model"}),
+    "exact": frozenset(),
+    "text_normalized": frozenset({"profile"}),
+    "set": frozenset(),
+    "structured": frozenset({"schema"}),
+    "rational_sqrt_band": frozenset({"epsilon", "conditioning_bound"}),
+    "rational_band": frozenset({"epsilon", "conditioning_bound"}),
+}
+
+
+def comparator_param_keys(kind: str) -> frozenset[str]:
+    """The params keys comparator `kind` reads. Raises UnknownComparatorKind for a
+    kind not in the registry (fail-closed)."""
+    if kind not in _COMPARATOR_REGISTRY:
+        raise UnknownComparatorKind(
+            f"comparator kind {kind!r} not in verifier registry "
+            f"(known: {tuple(_COMPARATOR_REGISTRY)!r})"
+        )
+    return _COMPARATOR_PARAM_KEYS[kind]
+
+
 def comparator_kinds() -> frozenset[str]:
     """The comparator kind names this verifier implements."""
     return frozenset(_COMPARATOR_REGISTRY)
@@ -743,9 +790,17 @@ def validate_comparator_params(kind: str, params: dict) -> None:
     if kind == "scalar_epsilon":
         if "epsilon" not in params:
             raise ValueError("scalar_epsilon requires an 'epsilon' param")
+        raw_eps = params["epsilon"]
+        # Typed, not coerced (census §2.1.4): `true` used to load as 1.0 and a
+        # numeric string as its value. Mirrors the band kinds below.
+        if isinstance(raw_eps, bool) or not isinstance(raw_eps, (int, float)):
+            raise ValueError(
+                "scalar_epsilon epsilon must be a JSON number (int or float, not "
+                f"bool), got {type(raw_eps).__name__} {raw_eps!r}"
+            )
         try:
-            eps = float(params["epsilon"])
-        except (TypeError, ValueError, OverflowError) as exc:
+            eps = float(raw_eps)
+        except OverflowError as exc:
             raise ValueError(f"scalar_epsilon epsilon not numeric: {exc}") from exc
         if not math.isfinite(eps) or eps < 0:
             raise ValueError(

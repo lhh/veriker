@@ -187,6 +187,7 @@ class RasterRecompute:
     """
 
     primitive_id: str = "raster_recompute"
+    expects = frozenset()  # declared inputs: this primitive reads no binding param
     primitive_shape: str = "geospatial zonal count (point-in-polygon)"
     primitive_version: str = "1"
     primitive_tier: str = "A"

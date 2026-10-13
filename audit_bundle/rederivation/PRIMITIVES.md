@@ -158,9 +158,9 @@ Of the **45 shipped pilots that carry a spec binding, 23 (51%) are reachable by 
 | `dp_recompute` | differential privacy (Laplace seeded-noise aggregate) | A | `@1` |
 | `event_log_replay_recompute` | event-log replay -> reconstructed-record digest | A | `@1` |
 | `fea_vonmises_recompute` | scalar with tolerance (FEA von-Mises) | A | `@1` |
-| `fea_witness_certificate` | witness + certificate | C | `@1` |
-| `fea_witness_certificate_u_norm_2` | witness + certificate | C | `@1` |
-| `fea_witness_certificate_u_norm_inf` | witness + certificate | C | `@1` |
+| `fea_witness_certificate` | witness + certificate | C | `@2` |
+| `fea_witness_certificate_u_norm_2` | witness + certificate | C | `@2` |
+| `fea_witness_certificate_u_norm_inf` | witness + certificate | C | `@2` |
 | `fintech_audit_recompute` | all-pairs predicate -> verdict-or-NOT_APPLICABLE (decision list) | A | `@1` |
 | `fp_ml_recompute` | floating-point ML | A | `@1` |
 | `healthcare_diagnosis_recompute` | fire-and-collect (decision list) | A | `@1` |
@@ -290,7 +290,7 @@ Scope limits:
 
 ### `fea_witness_certificate`
 
-Shape: **witness + certificate**. **Tier C** — certificate checker — never solves. **Contract revision `@1`.**
+Shape: **witness + certificate**. **Tier C** — certificate checker — never solves. **Contract revision `@2`.**
 
 > Given the producer's committed displacement-field witness (payload/displacement_field.json), check the CERTIFICATE — Dirichlet values hold exactly and the equilibrium residual on the free DOFs of the ORIGINAL assembled K is inside the auditor-anchored tolerance — and return the witness-implied sigma_vm_max, compared by the bound rational_sqrt_band comparator. Assembly, residual and stress recovery are exact rational arithmetic throughout.
 
@@ -298,12 +298,12 @@ Scope limits:
 
 - It NEVER runs a solver. Solver-independent by construction: a Gaussian-elimination solve and a CG solve that both satisfy equilibrium pass the SAME certificate.
 - Declared semantics are honoured, not assumed: material must declare model=linear_elastic_isotropic and stress_state=plane_stress, and mesh must declare element_type=CST and dim=2, or the certificate refuses.
-- Without the comparator param input_anchor the certificate degrades to a witness-implied predicate over a PRODUCER-CHOSEN problem, and says so in its detail.
+- With input_anchor stated as null the certificate degrades to a witness-implied predicate over a PRODUCER-CHOSEN problem, and says so in its detail. Every param it reads must be stated: no defaults. A malformed or inconsistent param is could-not-conclude (DECLARED_INPUT_MALFORMED), never a refusal of the bundle.
 - This source file holds three registered primitives, so a #sha256 pin on any one of them also pins its two siblings.
 
 ### `fea_witness_certificate_u_norm_2`
 
-Shape: **witness + certificate**. **Tier C** — certificate checker — never solves. **Contract revision `@1`.**
+Shape: **witness + certificate**. **Tier C** — certificate checker — never solves. **Contract revision `@2`.**
 
 > The same certificate gates as fea_witness_certificate, returning ||u||_2 over ALL DOFs as sqrt_of_rational(sum of u_i^2), bound by rational_sqrt_band, under delta_u conditioning.
 
@@ -311,12 +311,12 @@ Scope limits:
 
 - It NEVER runs a solver. Solver-independent by construction: a Gaussian-elimination solve and a CG solve that both satisfy equilibrium pass the SAME certificate.
 - Declared semantics are honoured, not assumed: material must declare model=linear_elastic_isotropic and stress_state=plane_stress, and mesh must declare element_type=CST and dim=2, or the certificate refuses.
-- Without the comparator param input_anchor the certificate degrades to a witness-implied predicate over a PRODUCER-CHOSEN problem, and says so in its detail.
+- With input_anchor stated as null the certificate degrades to a witness-implied predicate over a PRODUCER-CHOSEN problem, and says so in its detail. Every param it reads must be stated: no defaults. A malformed or inconsistent param is could-not-conclude (DECLARED_INPUT_MALFORMED), never a refusal of the bundle.
 - This source file holds three registered primitives, so a #sha256 pin on any one of them also pins its two siblings.
 
 ### `fea_witness_certificate_u_norm_inf`
 
-Shape: **witness + certificate**. **Tier C** — certificate checker — never solves. **Contract revision `@1`.**
+Shape: **witness + certificate**. **Tier C** — certificate checker — never solves. **Contract revision `@2`.**
 
 > The same certificate gates as fea_witness_certificate, returning max|u_i| over ALL DOFs as a plain rational, bound by rational_band, under delta_u conditioning.
 
@@ -324,7 +324,7 @@ Scope limits:
 
 - It NEVER runs a solver. Solver-independent by construction: a Gaussian-elimination solve and a CG solve that both satisfy equilibrium pass the SAME certificate.
 - Declared semantics are honoured, not assumed: material must declare model=linear_elastic_isotropic and stress_state=plane_stress, and mesh must declare element_type=CST and dim=2, or the certificate refuses.
-- Without the comparator param input_anchor the certificate degrades to a witness-implied predicate over a PRODUCER-CHOSEN problem, and says so in its detail.
+- With input_anchor stated as null the certificate degrades to a witness-implied predicate over a PRODUCER-CHOSEN problem, and says so in its detail. Every param it reads must be stated: no defaults. A malformed or inconsistent param is could-not-conclude (DECLARED_INPUT_MALFORMED), never a refusal of the bundle.
 - This source file holds three registered primitives, so a #sha256 pin on any one of them also pins its two siblings.
 
 ### `fintech_audit_recompute`

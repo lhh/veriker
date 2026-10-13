@@ -35,6 +35,7 @@ VERSION = "2"
 
 class _Authoritative:
     primitive_id = NAME
+    expects = frozenset()  # declared inputs: this primitive reads no binding param
     primitive_version = VERSION
 
     def recompute(self, inputs, pack_section):  # pragma: no cover

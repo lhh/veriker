@@ -170,6 +170,7 @@ class BuildRealCompilerRecompute:
     """Verifier-side primitive for re-deriving the representative .pyc SHA-256."""
 
     primitive_id: str = "build_real_compiler_recompute"
+    expects = frozenset()  # declared inputs: this primitive reads no binding param
     primitive_shape: str = "real-compiler build digest"
     primitive_version: str = "1"
     primitive_tier: str = "A"

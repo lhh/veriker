@@ -92,6 +92,7 @@ class LegalContractRecompute:
     """Verifier-side primitive for re-deriving the per-clause case_cites structure."""
 
     primitive_id: str = "legal_contract_recompute"
+    expects = frozenset()  # declared inputs: this primitive reads no binding param
 
     def recompute(self, inputs, pack_section: dict):
         """Recompute the per-clause case_cites structure from the committed clause

@@ -9,7 +9,9 @@ meanings while every sha over it stays valid:
   "value": 0.8875}`` in a manifest-bound output verified exit 0 while the
   declared figure read 99.2%;
 * **``NaN`` / ``Infinity`` / ``-Infinity`` tokens** — not JSON (RFC 8259); a
-  strict consumer refuses bytes this verifier certified;
+  strict consumer refuses bytes this verifier certified — and a NUMBER token that
+  overflows ``float`` to infinity (``1e999999``) is the same value by another
+  spelling, refused with the same ``kind`` (2026-09-22);
 * **arbitrarily long integer tokens** — a parse-time resource bound the
   canonical codec (``_total_binding``) refuses at 600 digits.
 
@@ -30,6 +32,13 @@ Contract:
   with ``.kind`` in ``{"duplicate_key", "non_finite", "int_too_long"}`` and
   ``.key`` set for a duplicate — so a caller can map the refusal into its own
   vocabulary without matching message text;
+* nesting the stdlib parser cannot recurse into raises :class:`StrictJSONError`
+  with ``.kind == "too_deep"``. This CONVERTS the parser's ``RecursionError``
+  (not a ``ValueError``; measured 2026-09-21 escaping past every ``except
+  ValueError`` around this function) into the documented family. It is not a
+  depth POLICY — this module still owns no depth bound; ``admission.admit_bytes``
+  does, and a caller that wants a cheap REJECT before the parser recurses runs
+  it first (exception_escape/SPEC.md layer 1);
 * SYNTAX errors propagate unchanged as ``json.JSONDecodeError`` (also a
   ``ValueError``). A caller that must tell "not JSON at all" from "JSON-shaped
   but corrupt" (``claimset`` does) can; a caller that does not care catches
@@ -87,12 +96,24 @@ def _const(name: str) -> Any:
     raise StrictJSONError("non_finite", f"non-standard JSON token {name!r} rejected")
 
 
+def _float(s: str) -> float:
+    # `1e999999` is a syntactically valid number that float() overflows to inf — the same
+    # non-finite value the `Infinity` token is refused for, through the back door (red team
+    # 2026-09-22; the codec root already refused it in its validation walk)
+    f = float(s)
+    if f != f or f in (float("inf"), float("-inf")):
+        raise StrictJSONError("non_finite", f"non-finite number token {s[:40]!r} rejected")  # "non-finite": the wording a consumer test matches on
+    return f
+
+
 def strict_json_loads(data: "bytes | str") -> Any:
     """Parse JSON refusing duplicate keys, non-finite tokens, and oversized ints.
 
-    Raises :class:`StrictJSONError` for those three; ``json.JSONDecodeError``
-    for malformed syntax; ``UnicodeDecodeError`` for non-UTF-8 bytes;
-    ``TypeError`` for any other input type.
+    Raises :class:`StrictJSONError` for those three and for nesting the parser
+    cannot recurse into (``kind="too_deep"``); ``json.JSONDecodeError`` for
+    malformed syntax; ``UnicodeDecodeError`` for non-UTF-8 bytes — every one a
+    ``ValueError``, and nothing else on any ``bytes``/``str`` input;
+    ``TypeError`` for any other input type (the caller's, not the producer's).
     """
     if isinstance(data, (bytes, bytearray)):
         text = bytes(data).decode("utf-8")
@@ -102,6 +123,11 @@ def strict_json_loads(data: "bytes | str") -> Any:
         raise TypeError(
             f"strict_json_loads takes bytes or str, not {type(data).__name__}"
         )
-    return json.loads(
-        text, object_pairs_hook=_pairs, parse_int=_int, parse_constant=_const
-    )
+    try:
+        return json.loads(
+            text, object_pairs_hook=_pairs, parse_int=_int, parse_float=_float, parse_constant=_const
+        )
+    except RecursionError:
+        raise StrictJSONError(
+            "too_deep", "nesting deeper than the parser can recurse into"
+        ) from None

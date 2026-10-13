@@ -231,6 +231,7 @@ def _write_claimed(bundle: Path, output_id: str, raw: bytes) -> None:
 def _stub_primitive(value):
     class _P:
         primitive_id = "noop-f4"
+        expects = frozenset()  # declared inputs: this primitive reads no binding param
 
         def recompute(self, inputs, pack_section):
             return RecomputedValue(value=value, detail="stub")

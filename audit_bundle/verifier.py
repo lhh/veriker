@@ -16,7 +16,7 @@ from .strict_json import strict_json_loads
 from .digest import sha256_bytes as _sha256_bytes
 import os
 import subprocess
-from dataclasses import dataclass, fields, replace
+from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Sequence
 
@@ -38,6 +38,7 @@ from .bundle_manifest import (
     is_post_cutover,
 )
 from .admission import admit_bytes
+from .decide import decide_single, decide_through_join
 from .append_only_floor import check_append_only_floor, validate_min_class_policy
 from ._closed_universe import ClosedUniverseError
 from .claimset import (
@@ -100,7 +101,6 @@ from .verdict import (
     Completeness,
     Verdict,
     VerifierError,
-    compose,
     fail_closed,
 )
 
@@ -595,6 +595,24 @@ class BundleVerifier:
         *,
         dsse: "DsseVerifyContext | None" = None,
     ) -> VerifyResult:
+        """Run the walk under the fail-closed boundary and decide every outcome through
+        the join (One F depth 1). A raise anywhere in the walk becomes a crash-ERROR at
+        the inner boundary and is then handed to the join as `raised` (NO_VERDICT), so
+        the crash class carries the join's face like every other verdict. The outer
+        boundary exists for a raise inside the decider itself: that one verdict is a
+        bare crash-ERROR with no face, and the only such verdict."""
+        verdict = self._verify_guarded(bundle_dir, dsse=dsse)
+        if verdict.is_crash and verdict.decision is None:
+            return decide_single(verdict)
+        return verdict
+
+    @fail_closed("BundleVerifier.verify")
+    def _verify_guarded(
+        self,
+        bundle_dir: Path,
+        *,
+        dsse: "DsseVerifyContext | None" = None,
+    ) -> VerifyResult:
         """Run the DSSE pre-gate (if applicable) then the 4-step walk.
 
         Every verdict-influencing read happens against a SEALED SNAPSHOT — a
@@ -636,7 +654,7 @@ class BundleVerifier:
         # none and is instead labeled UNVERIFIED_CALLER_SUPPLIED on the face.
         anchor_guard = self._spec_anchor_containment_guard(bundle_dir)
         if anchor_guard is not None:
-            return anchor_guard
+            return decide_single(anchor_guard)
 
         # A nonexistent / non-directory bundle_dir takes the in-place lane:
         # there is nothing to copy, and the canonical missing-manifest reject
@@ -655,16 +673,18 @@ class BundleVerifier:
                     snap_dir, dsse=dsse, git_fallback_dir=bundle_dir
                 )
         except SnapshotUnsupportedNode as exc:
-            return Verdict.reject(
-                "SNAPSHOT_UNSUPPORTED_NODE", str(exc), "sealed_snapshot"
+            return decide_single(
+                Verdict.reject("SNAPSHOT_UNSUPPORTED_NODE", str(exc), "sealed_snapshot")
             )
         except SnapshotNonQuiescent as exc:
-            return Verdict.reject(
-                "SNAPSHOT_SOURCE_UNSTABLE", str(exc), "sealed_snapshot"
+            return decide_single(
+                Verdict.reject("SNAPSHOT_SOURCE_UNSTABLE", str(exc), "sealed_snapshot")
             )
         except SnapshotMaterializationError as exc:
-            return Verdict.incomplete(
-                "SNAPSHOT_MATERIALIZATION_FAILED", str(exc), "sealed_snapshot"
+            return decide_single(
+                Verdict.incomplete(
+                    "SNAPSHOT_MATERIALIZATION_FAILED", str(exc), "sealed_snapshot"
+                )
             )
 
     def _verify_in_dir(
@@ -715,7 +735,7 @@ class BundleVerifier:
         if isinstance(gate_result, _DsseGatePassed):
             gate_ctx = gate_result
         elif gate_result is not None:
-            return gate_result
+            return decide_single(gate_result)
 
         # Input-admission (ADR D9): bound size + nesting depth on the raw manifest
         # bytes BEFORE json.loads, so a deeply-nested manifest rejects as a clean
@@ -723,7 +743,7 @@ class BundleVerifier:
         # parser (which the boundary would otherwise classify as a VERIFIER ERROR).
         adm = admit_bytes(raw_manifest_bytes or b"", check_name="manifest_admission")
         if adm is not None:
-            return adm
+            return decide_single(adm)
 
         failures: list[VerifyFailure] = []
         # Clean-ERROR legs from plugins that ran cleanly but could not conclude (D6/D7);
@@ -817,13 +837,17 @@ class BundleVerifier:
             # (and is_post_cutover would route it down the weaker pre-cutover
             # lane). Caught BEFORE MalformedManifest: SchemaVersionError is a
             # ManifestError sibling, not a MalformedManifest subclass.
-            return Verdict.reject("schema_version", str(exc), "manifest_load")
+            return decide_single(
+                Verdict.reject("schema_version", str(exc), "manifest_load")
+            )
         except MalformedManifest as exc:
             # Parse-boundary failure: collect, do not raise. verify()'s contract
             # is that every failure mode surfaces as a VerifyFailure so an
             # adversarial manifest can never crash the verifier (fail-stop) — it
             # is rejected (fail-closed).
-            return Verdict.reject("malformed_manifest", str(exc), "manifest_load")
+            return decide_single(
+                Verdict.reject("malformed_manifest", str(exc), "manifest_load")
+            )
 
         # ------------------------------------------------------------------
         # Post-binding checks (run after the manifest parse).
@@ -935,13 +959,14 @@ class BundleVerifier:
                         detail=detail,
                     )
                 )
-            return Verdict.from_failures(
-                failures,
+            return decide_through_join(
+                Verdict.from_failures(failures),
                 completeness=Completeness(
                     layers=("conservation",),
                     deep_validation=False,
                     disclosures=tuple(disclosures),
                 ),
+                walk_completed=False,
             )
         for rel in conservation.unowned:
             failures.append(
@@ -1121,14 +1146,15 @@ class BundleVerifier:
             deep_validation=True,
             disclosures=tuple(disclosures),
         )
+        # One F depth 1 (register F5): the legs are decided THROUGH the join. The bundle
+        # is the one record on a `multi_root` roster; admission-class REJECTs make it
+        # UNUSABLE, every other step is a proposition, and `propositions.overall`
+        # decides. `state` is that decision on the tri-state; `reasons`/`legs` are the
+        # steps' own in the ratified order (crash-ERROR > REJECT > clean-ERROR > OK),
+        # which `decide_through_join` still computes as a cross-check: a disagreement is
+        # a verifier defect (DECISION_DIVERGENCE, crash-ERROR), never a softer verdict.
         base = Verdict.from_failures(failures, completeness=completeness)
-        if not incompletes:
-            return base
-        # Ratified algebra (crash-ERROR > REJECT > clean-ERROR > OK): a real REJECT
-        # dominates a clean-ERROR plugin; an otherwise-OK bundle with a could-not-conclude
-        # plugin is a clean-ERROR (INCOMPLETE), never a false GREEN. compose() does not
-        # carry completeness, so re-attach it to the composite face.
-        return replace(compose([base, *incompletes]), completeness=completeness)
+        return decide_through_join(base, incompletes, completeness=completeness)
 
     # ------------------------------------------------------------------
     # DSSE pre-gate (private)

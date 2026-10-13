@@ -1,5 +1,12 @@
 # raster_minimal — Geospatial Raster Zonal Aggregation Audit Bundle
 
+> **Legacy front door, not evidence.** This pilot's `verify.py` predates the anchored CLI:
+> its check runs the pilot's own re-derivation plugin against an unanchored spec; the
+> tamper demo below is the one that fails as promised. A PASS here does not show that the
+> claimed output re-derives from the committed inputs; the anchored command in the root
+> README, with the spec, primitives and work-set held outside the bundle, is. The pilot
+> stays until it is migrated.
+
 Domain pilot: deterministic zonal raster aggregation bundled for V-kernel
 audit verification (the audit-bundle contract §C5, C6, C9).
 
@@ -55,7 +62,8 @@ python -c "
 import pathlib, hashlib, json
 p = pathlib.Path('/tmp/raster_bundle/raster/grid.bin')
 data = bytearray(p.read_bytes())
-data[0] = (data[0] + 1) % 256   # flip cell (0,0)
+i = 5 * 32 + 5                   # cell (row 5, col 5): inside the polygon; (0,0) is not
+data[i] = (data[i] + 1) % 256
 p.write_bytes(bytes(data))
 
 # Re-align the manifest SHA so FileIntegrityManySmall passes

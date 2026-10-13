@@ -1,5 +1,11 @@
 # agritech_sensor_minimal — V-Kernel S0 Audit-Bundle Pilot
 
+> **Legacy front door, not evidence.** This pilot's `verify.py` predates the anchored CLI:
+> `fusion_weights_sha256` is never checked, so a zeroed weights digest still passes. A
+> PASS here does not show that the claimed output re-derives from the committed inputs;
+> the anchored command in the root README, with the spec, primitives and work-set held
+> outside the bundle, is. The pilot stays until it is migrated.
+
 **Domain:** Agritech soil-sensor fusion  
 **Re-derivation primitive:** Re-fuse predicted yield score from raw sensor time-series bytes using a committed linear-weighted formula; assert byte-for-byte reproducibility.
 

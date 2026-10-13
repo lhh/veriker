@@ -33,10 +33,11 @@ import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from types import MethodType
 
 from ..admission import admit_json_file
 from .._containment import ContainmentError, contain
-from ..plugin import ParsedInputs
+from ..plugin import DeclaredInputMalformed, ParsedInputs
 from ..work_set import WorkSet, WorkSetError
 from .coverage_trigger import (
     acceptance_rule_ref,
@@ -46,6 +47,7 @@ from .coverage_trigger import (
 from .comparators import (
     UnknownComparatorKind,
     UnknownComparatorParam,
+    comparator_param_keys,
     resolve_comparator,
 )
 from .primitive_ref import (
@@ -81,6 +83,111 @@ class DispatchFailure:
     # these to a clean-ERROR / VERIFIER_INCOMPLETE leg (exit 2) instead of a
     # REJECT failure (exit 1). Default False: every existing row is artifact-side.
     incomplete: bool = False
+
+
+#: `_declared_inputs` result for a primitive with no `expects` attribute at all.
+#: Not a str, so it can never be mistaken for a malformed-declaration message.
+class _Undeclared:
+    __slots__ = ()
+
+
+_UNDECLARED = _Undeclared()
+
+
+def _is_own_bound_recompute(primitive: object, method: object) -> bool:
+    """`method` is the class-resolved `recompute` bound to `primitive`, exactly."""
+    for cls in type(primitive).__mro__:
+        if "recompute" in vars(cls):
+            defined = vars(cls)["recompute"]
+            break
+    else:
+        return False
+    return (
+        type(method) is MethodType
+        and method.__self__ is primitive
+        and method.__func__ is defined
+    )
+
+
+def _declares_for_its_recompute(primitive: object) -> bool:
+    """True when `expects` is stated at or below the definer of `recompute`: on the
+    instance, or on a class whose MRO position is no further from the instance than
+    the class that defines `recompute`. `recompute` stored on the instance needs
+    `expects` on the instance too, unless it is the class's own `recompute` bound to
+    this instance (what `monkeypatch` leaves behind on undo): that runs the code the
+    class declared for. Read through `__dict__`s, never `getattr`, so an inherited
+    attribute cannot stand in for an own one."""
+    try:  # a slotted primitive has none; `__getattr__` must not supply one
+        inst = object.__getattribute__(primitive, "__dict__")
+    except AttributeError:
+        inst = {}
+    if not isinstance(inst, dict):
+        inst = {}
+    if "recompute" in inst and not _is_own_bound_recompute(
+        primitive, inst["recompute"]
+    ):
+        return "expects" in inst
+    if "expects" in inst:
+        return True
+    for cls in type(primitive).__mro__:
+        own = vars(cls)
+        if "expects" in own:
+            return True
+        if "recompute" in own:
+            return False
+    return False
+
+
+def _declared_inputs(
+    primitive: object,
+) -> tuple[frozenset, frozenset] | str | _Undeclared:
+    """(expects, expects_optional) read ONCE from the primitive, `_UNDECLARED` when
+    it has no `expects` attribute, or a str naming why the declaration is malformed.
+    `expects` is REQUIRED (`frozenset()` states "reads no binding param");
+    `expects_optional` may be absent (empty). An undeclared primitive is refused,
+    not treated as empty: an empty view would hand a primitive that reads, say,
+    `epsilon` without declaring it nothing at all, and it would run on its own
+    default or raise (a crash read as a REJECT) with no refusal naming why.
+    Wrapped: a declaration is primitive-supplied code (a `property` can raise), and
+    an escape here would replace every REJECT already collected (§C9).
+
+    `expects` counts only where it describes the `recompute` that runs: it must be
+    stated on the class that defines `recompute`, on a class nearer the instance in
+    its MRO, or on the instance. A subclass that overrides `recompute` does not
+    inherit its base's declaration -- the base declared what ITS computation reads,
+    and an override reading `epsilon` under an inherited `frozenset()` would get
+    an empty view and run on its own default, the case this refusal exists for."""
+    try:
+        if not _declares_for_its_recompute(primitive):
+            return _UNDECLARED
+    except Exception as exc:  # noqa: BLE001 - fail-closed, never escape
+        return f"locating `expects` raised {type(exc).__name__}"
+    out = []
+    for name in ("expects", "expects_optional"):
+        try:
+            raw = getattr(primitive, name, _UNDECLARED)
+        except Exception as exc:  # noqa: BLE001 - fail-closed, never escape
+            return f"reading `{name}` raised {type(exc).__name__}"
+        if raw is _UNDECLARED:
+            if name == "expects":
+                return _UNDECLARED
+            raw = frozenset()
+        if not isinstance(raw, (frozenset, set, tuple, list)):
+            return f"`{name}` must be a set of str, got {type(raw).__name__}"
+        try:  # a subclass can override __iter__ / __len__; iterate inside the guard
+            keys = list(raw)
+            if len(keys) > 256:
+                return f"`{name}` declares {len(keys)} keys (limit 256)"
+            if not all(type(k) is str and k for k in keys):
+                return f"`{name}` must contain only non-empty str"
+            out.append(frozenset(keys))
+        except Exception as exc:  # noqa: BLE001 - fail-closed, never escape
+            return f"iterating `{name}` raised {type(exc).__name__}"
+    if out[0] & out[1]:
+        return (
+            f"`expects` and `expects_optional` overlap on {sorted(out[0] & out[1])!r}"
+        )
+    return out[0], out[1]
 
 
 # ---------------------------------------------------------------------------
@@ -901,6 +1008,82 @@ def run_spec_pinned_dispatch(
             results.append(False)
             continue
 
+        # --- Declared inputs (the declared-inputs contract). Every binding param
+        #     must be read by someone: the comparator kind, or the primitive's
+        #     declared `expects` / `expects_optional`. A key nobody reads is an
+        #     instruction the auditor believes is enforced and is not (measured:
+        #     `"expected": 0` on a rational_band binding verified at exit 0). A
+        #     key the primitive EXPECTS must be present: the primitive supplies
+        #     no default for a value the asker owns. Both are the auditor's
+        #     instruction being malformed, not evidence about the artifact, so
+        #     both are `incomplete` (exit 2). The primitive then sees ONLY its
+        #     declared keys: reading past its declaration reads nothing. ---
+        declared = _declared_inputs(primitive)
+        if isinstance(declared, _Undeclared):
+            failures.append(
+                DispatchFailure(
+                    cn,
+                    "PRIMITIVE_UNDECLARED",
+                    f"PRIMITIVE_UNDECLARED: output {output_id!r}: primitive "
+                    f"{binding.primitive_id!r} does not declare `expects`, the set of "
+                    "binding params it reads (`frozenset()` if it reads none). Without "
+                    "it the verifier cannot tell which of the auditor's values the "
+                    "primitive consumes, so it is not run.",
+                    incomplete=True,
+                )
+            )
+            results.append(False)
+            continue
+        if isinstance(declared, str):
+            failures.append(
+                DispatchFailure(
+                    cn,
+                    "PRIMITIVE_EXPECTS_MALFORMED",
+                    f"PRIMITIVE_EXPECTS_MALFORMED: output {output_id!r}: "
+                    f"primitive {binding.primitive_id!r}: {declared}",
+                    incomplete=True,
+                )
+            )
+            results.append(False)
+            continue
+        expects, expects_optional = declared
+        params = binding.comparator_params
+        allowed = (
+            comparator_param_keys(binding.comparator_kind) | expects | expects_optional
+        )
+        unknown = [k for k in params if k not in allowed]
+        if unknown:
+            failures.append(
+                DispatchFailure(
+                    cn,
+                    "UNKNOWN_SPEC_PARAM",
+                    f"UNKNOWN_SPEC_PARAM: output {output_id!r} (type {type_key!r}): "
+                    f"param(s) {sorted(unknown, key=repr)!r} are read by neither the "
+                    f"{binding.comparator_kind!r} comparator nor primitive "
+                    f"{binding.primitive_id!r} (it declares "
+                    f"{sorted(expects | expects_optional)!r}). A key nobody reads "
+                    "is not enforced; remove it, or use a primitive that reads it.",
+                    incomplete=True,
+                )
+            )
+            results.append(False)
+            continue
+        missing = [k for k in expects if k not in params]
+        if missing:
+            failures.append(
+                DispatchFailure(
+                    cn,
+                    "MISSING_SPEC_PARAM",
+                    f"MISSING_SPEC_PARAM: output {output_id!r} (type {type_key!r}): "
+                    f"primitive {binding.primitive_id!r} expects "
+                    f"{sorted(missing)!r}, which the binding does not state. The "
+                    "primitive supplies no default for a value the asker owns.",
+                    incomplete=True,
+                )
+            )
+            results.append(False)
+            continue
+
         # --- Recompute (Axis 2; try/except -> recorded failure, §4a.8). ---
         # Record the ATTEMPT before the call, not after it. Recording after the
         # try/except excluded RECOMPUTE_ERROR — the one path defined by the
@@ -912,12 +1095,28 @@ def run_spec_pinned_dispatch(
         pack_section = {
             "output_id": output_id,
             "type": type_key,
-            "params": dict(binding.comparator_params),
+            "params": {
+                k: v for k, v in params.items() if k in expects or k in expects_optional
+            },
         }
         try:
             # R2: the SAME object that was hashed above. Never re-read the
             # attribute here — that is the divergence the pin exists to close.
             recomputed = bound_recompute(inputs, pack_section)
+        except DeclaredInputMalformed as exc:
+            # The auditor's declared value is malformed (the primitive says so by
+            # this declared class, never by a builtin one): could not conclude.
+            failures.append(
+                DispatchFailure(
+                    cn,
+                    "DECLARED_INPUT_MALFORMED",
+                    f"DECLARED_INPUT_MALFORMED: output {output_id!r}: primitive "
+                    f"{binding.primitive_id!r}: {exc}",
+                    incomplete=True,
+                )
+            )
+            results.append(False)
+            continue
         except Exception as exc:  # noqa: BLE001 — any primitive error is fail-closed
             failures.append(
                 DispatchFailure(

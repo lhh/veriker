@@ -96,6 +96,7 @@ class Iso42001DecisionCountRecompute:
     """
 
     primitive_id: str = "iso42001_decision_count_recompute"
+    expects = frozenset()  # declared inputs: this primitive reads no binding param
 
     def recompute(self, inputs, pack_section: dict):
         from audit_bundle.plugin import RecomputedValue  # noqa: PLC0415
@@ -124,6 +125,7 @@ class Iso42001OversightRateRecompute:
     """
 
     primitive_id: str = "iso42001_oversight_rate_recompute"
+    expects = frozenset()  # declared inputs: this primitive reads no binding param
 
     def recompute(self, inputs, pack_section: dict):
         from audit_bundle.plugin import RecomputedValue  # noqa: PLC0415

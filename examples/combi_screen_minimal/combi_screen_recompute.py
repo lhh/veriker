@@ -156,6 +156,7 @@ class CombiScreenRecompute:
     """Verifier-side primitive for re-deriving the advanced (top-K) compound id set."""
 
     primitive_id: str = "combi_screen_recompute"
+    expects = frozenset()  # declared inputs: this primitive reads no binding param
 
     def recompute(self, inputs, pack_section: dict):
         """Recompute the advanced set from the committed building blocks + configs +

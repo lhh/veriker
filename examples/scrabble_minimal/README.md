@@ -1,5 +1,11 @@
 # scrabble_minimal — Tournament-Scrabble Dictionary Adjudication Audit Bundle Pilot
 
+> **Legacy front door, not evidence.** This pilot's `verify.py` predates the anchored CLI:
+> deleting the timeline and dispute files and dropping them from the manifest still
+> passes. A PASS here does not show that the claimed output re-derives from the committed
+> inputs; the anchored command in the root README, with the spec, primitives and work-set
+> held outside the bundle, is. The pilot stays until it is migrated.
+
 Domain pilot: tournament-Scrabble word-legality adjudication, bundled for V-kernel
 audit verification (the audit-bundle contract §C5, C6, C9, C15).
 

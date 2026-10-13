@@ -111,6 +111,7 @@ def test_every_registered_primitive_puts_its_tier_on_the_face(pid: str) -> None:
 
 class _NoTier:
     primitive_id = "demo"
+    expects = frozenset()  # declared inputs: this primitive reads no binding param
     primitive_version = "1"
 
     def recompute(self, inputs, pack_section):

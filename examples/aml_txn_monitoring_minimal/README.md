@@ -1,5 +1,12 @@
 # aml_txn_monitoring_minimal
 
+> **Legacy front door, not evidence.** This pilot's `verify.py` predates the anchored CLI:
+> the pack iterates only the customers present in the payload, so deleting a customer's
+> report and re-aligning its hash still passes. A PASS here does not show that the claimed
+> output re-derives from the committed inputs; the anchored command in the root README,
+> with the spec, primitives and work-set held outside the bundle, is. The pilot stays
+> until it is migrated.
+
 V-Kernel audit-bundle pilot: **PLD-FT transaction monitoring (COAF-report rule-tree)**,
 anchored to the Brazilian anti-money-laundering surface a bank like Banco Inter faces.
 

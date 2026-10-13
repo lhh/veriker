@@ -4,7 +4,10 @@ The per-type binding type -> {primitive_id, comparator{kind,params}} lives in a
 SHA-pinned spec file (the spec/ tree the verifier already integrity-checks at
 step 2). This module:
 
-  (step 3) parses a spec's binding object and resolves type -> Binding;
+  (step 3) parses a spec's binding object and resolves type -> Binding
+    (closed objects, UNKNOWN_SPEC_KEY; see `parse_spec`. Declared limit:
+    `"pinned_inputs": {}` is accepted as "pin nothing" -- an explicit empty
+    map is a declaration by the auditor, not a silent drop; `null` is refused);
   (step 4 — GATING, §4a.1/4a.2) anchors the AUTHORITATIVE spec set to an
     AUDITOR-controlled allowlist (spec_id -> required SHA). SHA-pinning proves a
     named spec's *contents* are immutable; it does NOT prove the producer chose
@@ -37,6 +40,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from .._total_binding import TotalBindingError, assert_exact_keys
 from ..admission import admit_json_file
 from ..digest import sha256_file as _sha256_file
 from ..strict_json import strict_json_loads
@@ -89,6 +93,48 @@ class AnchorNotSupplied(SpecBindingError):
     leg (exit 2), NEVER a REJECT (exit 1).
 
     Contract: OSS_RELEASE_BOUNDARY.md tri-state (OK / REJECT / ERROR)."""
+
+
+class UnknownSpecKey(AnchorNotSupplied):
+    """UNKNOWN_SPEC_KEY: an object the binding parser reads from a spec the
+    AUDITOR anchored -- a type body, or a comparator object's top level --
+    carries a key the verifier does not read -- or the spec object's own top
+    level carries a key the verifier reads only at one of those lower levels
+    (`_SPEC_TOP_KEYS_REFUSED`, e.g. a top-level `pinned_inputs`). (Otherwise
+    the top level is deliberately open; see `_SPEC_KEYS_READ` for why and what
+    that costs.)
+
+    The defect this closes (One F U19 census, CENSUS.md §2.1.1, probe
+    `probes/F/probe_pins.out` `[p4_typo_key] ok=True`): every one of those
+    objects used to be read with `.get()` and nothing else, so a key the
+    parser does not know was silently ignored. A misspelt `pinned_imputs`
+    therefore dropped EVERY pin the auditor wrote, and a decoy forgery that the
+    pins would have refused verified clean. A key nobody reads is an
+    instruction the auditor believes is enforced and is not -- the same
+    reasoning as UNKNOWN_SPEC_PARAM one level down, for the binding PARAMS.
+
+    BLAME (One F rule 8, settled 2026-10-07 under H4): the anchor says whose
+    declaration it is. A spec whose bytes the auditor anchored is the
+    auditor's, so an error in it is the auditor's: could-not-conclude naming
+    the auditor (exit 2, `VERIFIER_INCOMPLETE`, the code carried in the detail
+    text -- the same verdict class and exit path as MISSING_SPEC_PARAM), never
+    a producer REJECT. On an in-bundle spec the anchor did NOT vouch for, the
+    same stray key is artifact bytes, and `build_anchored_spec_set` raises
+    `MalformedSpec` (REJECT, the legacy precedent) instead of this class --
+    otherwise a producer could plant an unanchored spec carrying a stray key
+    and turn the AnchorViolation REJECT it earned into an ERROR. `parse_spec`
+    called WITHOUT knowing whether its input is anchored (`anchored=None`)
+    cannot tell the two apart, so it raises this ERROR class; only a caller
+    that has checked the anchor can say a spec is producer bytes.
+
+    WHY A SUBCLASS OF AnchorNotSupplied. The dispatch boundary routes a
+    load-time SpecBindingError to could-not-conclude iff it is an
+    AnchorNotSupplied; every other subclass is a REJECT. The condition is the
+    one that class names, narrowed: no USABLE auditor authority -- an anchor
+    was supplied, but a spec it vouches for does not say what its author
+    believes it says, so nothing can be concluded from it about the bundle.
+    The reason code a reader sees is the `UNKNOWN_SPEC_KEY:` prefix of the
+    detail, exactly as MISSING_SPEC_PARAM travels in its detail text."""
 
 
 class AnchorConstructionError(SpecBindingError):
@@ -309,13 +355,165 @@ class SpecAnchor:
 # Spec parsing
 # ---------------------------------------------------------------------------
 
+# CLOSED DECLARATIONS (One F U19 census rule 5, CENSUS.md §2.1.1). The keys
+# `parse_spec` READS from each object it owns, split into required and
+# optional. Each type body and each comparator object is closed with
+# `assert_exact_keys` against required | (optional actually present), so an
+# unknown key there is a refusal (UNKNOWN_SPEC_KEY), never a silently-ignored
+# instruction. tests/test_spec_binding_closed_keys.py derives the keys
+# `parse_spec` reads from its own source and checks them against these sets.
+#
+# THE SPEC OBJECT'S TOP LEVEL IS OPEN, BY DECLARED INTENT. It is a SHARED
+# auditor document, not this parser's record: other auditor-side readers keep
+# their own sections in the same anchored bytes, so that one anchored sha
+# covers the whole method. Measured 2026-10-07: examples/gaci_city_index's
+# anchored spec carries `method_version`, `layers`, `calibration`, `sources`,
+# `capability_sources`, `discovery`, `corpus`, `geo_attribution`, `charter`
+# and `adversary` beside `spec_id` / `types`, read by the gaci agent (its
+# calibration floors, source registry, ...); closing the top level here
+# refused every gaci run (64 tests). spec_binding owns only `spec_id` and
+# `types` there, and both are REQUIRED, so a misspelling of either does not
+# loosen anything: the spec is not a binding spec, is not authoritative, and
+# its types do not resolve (AnchorViolation / UNKNOWN_TYPE, fail-closed --
+# today with REJECT blame, a rule-8 residue recorded in the commit). Every
+# object UNDER `types` belongs to this parser alone, and that is where a typo
+# silently dropped the pins. The one exception to "open": a key this parser
+# reads at a lower level is refused at the top (`_SPEC_TOP_KEYS_REFUSED`).
+#
+# Comparator PARAMS are not closed here: they are closed per kind and per
+# primitive at dispatch (UNKNOWN_SPEC_PARAM / MISSING_SPEC_PARAM), which is the
+# only place that knows which primitive reads which param. `pinned_inputs` is a
+# MAP (bundle-relative path -> sha256), not a record: its keys are data, and
+# each entry is typed in `_parse_pinned_inputs`.
+_SPEC_KEYS_READ: frozenset[str] = frozenset({"spec_id", "types"})
+_TYPE_KEYS_REQUIRED: frozenset[str] = frozenset({"primitive_id", "comparator"})
+_TYPE_KEYS_OPTIONAL: frozenset[str] = frozenset({"pinned_inputs"})
+_COMPARATOR_KEYS_REQUIRED: frozenset[str] = frozenset({"kind"})
+_COMPARATOR_KEYS_OPTIONAL: frozenset[str] = frozenset({"params"})
 
-def parse_spec(raw: object, spec_path: str) -> tuple[str, dict[str, Binding]]:
+# OPEN, BUT NOT TO THE KEYS THIS PARSER READS ONE LEVEL DOWN. The top level
+# stays open for sections spec_binding does not read -- but a key it reads at
+# a LOWER level (a type body's or a comparator object's) is refused there with
+# UNKNOWN_SPEC_KEY, same class and exit as the closure below it. The witness
+# (orchestrator ruling on the B1 review, option (a)): `pinned_inputs` written
+# at the spec top level instead of inside the type body was silently ignored,
+# the type ran unpinned, and the census decoy forgery RELEASEd (exit 0). An
+# auditor who writes such a key there means it for the binding, so it is a
+# misplacement, not another reader's section. Derived from the closure's own
+# sets (never a second hand list); the AST test in
+# tests/test_spec_binding_closed_keys.py pins it equal to the keys `parse_spec`
+# reads off `body` and `comparator`, minus the ones it reads at the top.
+# Comparator PARAM names (`profile`, `epsilon`, ...) are not in it: they are an
+# open per-kind / per-primitive vocabulary closed at dispatch, not keys this
+# parser reads -- a declared residue.
+_SPEC_TOP_KEYS_REFUSED: frozenset[str] = (
+    _TYPE_KEYS_REQUIRED
+    | _TYPE_KEYS_OPTIONAL
+    | _COMPARATOR_KEYS_REQUIRED
+    | _COMPARATOR_KEYS_OPTIONAL
+) - _SPEC_KEYS_READ
+
+
+def _close_keys(
+    obj: dict,
+    required: frozenset[str],
+    optional: frozenset[str],
+    *,
+    where: str,
+    spec_path: str,
+    anchored: bool | None,
+) -> None:
+    """Refuse a key in `obj` that the parser does not read (UNKNOWN_SPEC_KEY).
+
+    Uses the shared `assert_exact_keys` (a missing AND an unexpected key both
+    fail) against `required | (optional & present)`. Called only after the
+    caller has checked every required key, so in practice only the unexpected
+    half can fire here; the helper's own message is kept in the detail either
+    way.
+
+    The refusal class follows the declaration's author (rule 8): an anchored
+    spec, or one whose anchoring this site cannot see (`anchored` True or
+    None), is the auditor's -> UnknownSpecKey (could-not-conclude, exit 2). A
+    spec the caller established is NOT anchored (`anchored=False`) is artifact
+    bytes -> MalformedSpec (REJECT).
+    """
+    try:
+        assert_exact_keys(obj, required | (optional & obj.keys()))
+    except TotalBindingError as exc:
+        allowed = required | optional
+        unknown = [k for k in obj if k not in allowed]  # insertion order (§C9)
+        detail = (
+            f"UNKNOWN_SPEC_KEY: spec {spec_path!r}: {where} carries key(s) "
+            f"{unknown!r} that the verifier does not read (it reads "
+            f"{sorted(allowed)!r}). A key nobody reads is not enforced: a "
+            "misspelt 'pinned_inputs' silently dropped every pin the auditor "
+            f"wrote. [{exc}]"
+        )
+        raise _unknown_spec_key(detail, anchored) from exc
+
+
+def _unknown_spec_key(detail: str, anchored: bool | None) -> SpecBindingError:
+    """The UNKNOWN_SPEC_KEY refusal in the class its author earns (rule 8):
+    `anchored is False` -> MalformedSpec (REJECT, artifact bytes); True or
+    None -> UnknownSpecKey (could-not-conclude naming the auditor)."""
+    if anchored is False:
+        return MalformedSpec(
+            detail + " This spec is NOT one the auditor anchored, so its "
+            "bytes are the artifact's: REJECT (MalformedSpec)."
+        )
+    return UnknownSpecKey(
+        detail + " The spec is the AUDITOR's declaration (its sha is "
+        "anchored, or this parse site cannot see the anchor), so the error "
+        "is the auditor's: could not conclude (exit 2), not a producer "
+        "REJECT. Fix the spec and re-anchor it."
+    )
+
+
+def _refuse_misplaced_top_level_keys(
+    raw: dict, spec_path: str, *, anchored: bool | None
+) -> None:
+    """Refuse, at the spec object's top level, a key spec_binding reads only
+    at a lower level (`_SPEC_TOP_KEYS_REFUSED`) -> UNKNOWN_SPEC_KEY."""
+    misplaced = [k for k in raw if k in _SPEC_TOP_KEYS_REFUSED]  # insertion order
+    if not misplaced:
+        return
+    raise _unknown_spec_key(
+        f"UNKNOWN_SPEC_KEY: spec {spec_path!r}: the spec object's top level "
+        f"carries key(s) {misplaced!r} that the verifier reads only inside a "
+        "type body or a comparator object, never at the top level "
+        f"(refused there: {sorted(_SPEC_TOP_KEYS_REFUSED)!r}). Written here they "
+        "would be ignored: a top-level 'pinned_inputs' left the type unpinned "
+        "and a decoy forgery released. Move the key into the type it governs.",
+        anchored,
+    )
+
+
+def parse_spec(
+    raw: object, spec_path: str, *, anchored: bool | None = None
+) -> tuple[str, dict[str, Binding]]:
     """Parse one spec's binding object -> (spec_id, {type_key: Binding}).
 
     Raises MalformedSpec on any shape error (fail-closed). Each comparator's
     params are validated against the closed-world allowlist (§4a.6) here so a
     bad profile/schema is rejected at load, before any dispatch.
+
+    Every object this parser owns is CLOSED: each type body and each
+    comparator object's top level refuse a key the parser does not read
+    (UNKNOWN_SPEC_KEY). The spec object's top level is a shared auditor
+    document and stays open by declared intent (`_SPEC_KEYS_READ`) -- except
+    to the keys this parser reads one level down (`_SPEC_TOP_KEYS_REFUSED`:
+    a top-level `pinned_inputs`, `primitive_id`, `comparator`, `kind` or
+    `params` is a misplacement and is refused, UNKNOWN_SPEC_KEY, same class).
+    `"pinned_inputs": {}` is ACCEPTED as "pin nothing", a declared limit: an
+    explicit empty map is a declaration by the auditor, not a silent drop
+    (`null` is refused). `anchored` names
+    whose declaration this is, and so which class that refusal takes:
+    True (the auditor's anchor lists these bytes) or None (THIS SITE CANNOT
+    TELL an anchored spec from an in-bundle copy -- the default for a direct
+    caller) -> UnknownSpecKey, the could-not-conclude class (exit 2); False
+    (the caller checked the anchor and these bytes are not in it) ->
+    MalformedSpec, REJECT. Only `build_anchored_spec_set` passes False, after
+    it has checked the anchor itself.
     """
     if not isinstance(raw, dict):
         raise MalformedSpec(f"spec {spec_path!r} is not a JSON object")
@@ -325,6 +523,7 @@ def parse_spec(raw: object, spec_path: str) -> tuple[str, dict[str, Binding]]:
     types_obj = raw.get("types")
     if not isinstance(types_obj, dict) or not types_obj:
         raise MalformedSpec(f"spec {spec_path!r} missing non-empty 'types' object")
+    _refuse_misplaced_top_level_keys(raw, spec_path, anchored=anchored)
 
     bindings: dict[str, Binding] = {}
     for type_key, body in types_obj.items():
@@ -346,11 +545,27 @@ def parse_spec(raw: object, spec_path: str) -> tuple[str, dict[str, Binding]]:
             raise MalformedSpec(
                 f"spec {spec_path!r}: type {type_key!r} missing 'comparator' object"
             )
+        _close_keys(
+            body,
+            _TYPE_KEYS_REQUIRED,
+            _TYPE_KEYS_OPTIONAL,
+            where=f"type {type_key!r} body",
+            spec_path=spec_path,
+            anchored=anchored,
+        )
         kind = comparator.get("kind")
         if not isinstance(kind, str) or not kind:
             raise MalformedSpec(
                 f"spec {spec_path!r}: type {type_key!r} comparator missing 'kind'"
             )
+        _close_keys(
+            comparator,
+            _COMPARATOR_KEYS_REQUIRED,
+            _COMPARATOR_KEYS_OPTIONAL,
+            where=f"type {type_key!r} comparator object",
+            spec_path=spec_path,
+            anchored=anchored,
+        )
         params = comparator.get("params", {})
         if not isinstance(params, dict):
             raise MalformedSpec(
@@ -374,6 +589,14 @@ def parse_spec(raw: object, spec_path: str) -> tuple[str, dict[str, Binding]]:
             raise MalformedSpec(
                 f"spec {spec_path!r}: type {type_key!r} primitive_id {exc}"
             ) from exc
+        if "pinned_inputs" in body and body["pinned_inputs"] is None:
+            # A PRESENT `null` used to read exactly like an absent key -- pin
+            # nothing -- which is a value outside the domain turned into a
+            # silent "does not apply" (census rule 2). `null` is not an object.
+            raise MalformedSpec(
+                f"spec {spec_path!r}: type {type_key!r} pinned_inputs must be an "
+                "object, got null (omit the key to pin nothing)"
+            )
         pinned_inputs = _parse_pinned_inputs(
             body.get("pinned_inputs"), spec_path, type_key
         )
@@ -550,8 +773,17 @@ def build_anchored_spec_set(
         # prose spec (no spec_id/types) is silently skipped for dispatch.
         if not (isinstance(raw, dict) and "types" in raw and "spec_id" in raw):
             continue
-        spec_id, bindings = parse_spec(raw, spec_path)
-        if not anchor.matches(spec_id, computed_sha):
+        # WHOSE declaration is this (rule 8)? Decided BEFORE parsing, because
+        # the class of an UNKNOWN_SPEC_KEY refusal depends on it: bytes the
+        # anchor lists are the auditor's (could-not-conclude); bytes it does
+        # not list are the artifact's (REJECT). A non-string spec_id cannot be
+        # anchored, and parse_spec refuses it as MalformedSpec regardless.
+        raw_spec_id = raw.get("spec_id")
+        is_anchored = isinstance(raw_spec_id, str) and anchor.matches(
+            raw_spec_id, computed_sha
+        )
+        spec_id, bindings = parse_spec(raw, spec_path, anchored=is_anchored)
+        if not is_anchored:
             # SHA-pinned but NOT auditor-anchored (or substituted) -> not
             # authoritative. This is the spec-selection defense (§4a.1).
             # Record WHY it did not match so the failure detail can distinguish

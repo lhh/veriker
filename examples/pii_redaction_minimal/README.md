@@ -1,5 +1,12 @@
 # pii_redaction_minimal — PII Redaction Audit Bundle Pilot
 
+> **Legacy front door, not evidence.** This pilot's `verify.py` predates the anchored CLI:
+> category names are taken from the payload, so relabelling a sensitive category as non-
+> sensitive still passes. A PASS here does not show that the claimed output re-derives
+> from the committed inputs; the anchored command in the root README, with the spec,
+> primitives and work-set held outside the bundle, is. The pilot stays until it is
+> migrated.
+
 Domain pilot: deterministic re-derivation of PII spans produced by OpenAI Privacy
 Filter (Apache 2.0, released 2026-04-22) using a stdlib constrained-Viterbi decode
 over a bundled BIOES logits tensor.

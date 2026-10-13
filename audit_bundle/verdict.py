@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import functools
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable
 
@@ -148,7 +148,7 @@ def exit_code(verdict: "Verdict") -> int:
     Callers keying on `exit != 0` are unaffected: REJECT and ERROR are both
     non-zero, and neither is certified.
 
-    NOTE -- deliberate difference from veriker.cli/verify.py. That entry point escalates
+    NOTE -- deliberate difference from veriker/cli/verify.py. That entry point escalates
     to 2 from separately-tracked flags (verifier_errored / rederivation_not_run /
     extension_not_evaluated), so a verdict carrying BOTH a REJECT leg and a
     clean-ERROR leg exits 2 there and 1 here: `compose` ranks
@@ -179,6 +179,13 @@ class Verdict:
     legs: tuple["Verdict", ...] = ()
     completeness: Completeness | None = None
     error_kind: ErrorKind | None = None
+    #: The join's face (One F depth 1, `audit_bundle/decide.py`): `multi_root.overall`'s
+    #: dict plus per-proposition states, record dispositions and the roster's universe
+    #: sha, deep-frozen. `state` IS this decision projected onto the tri-state; the field
+    #: carries what the tri-state cannot (which propositions rest on the proposer's root
+    #: only, which record was unusable, what blame the engine assigns). Excluded from
+    #: equality so a verdict compares on what it decided, not on the face's wording.
+    decision: Any = field(default=None, compare=False)
 
     def __post_init__(self) -> None:
         # Invariant: error_kind is meaningful ONLY on an ERROR verdict. An ERROR built
@@ -195,9 +202,6 @@ class Verdict:
     @classmethod
     def passed(cls, *, completeness: Completeness | None = None) -> "Verdict":
         return cls(VerdictState.OK, (), (), completeness)
-
-    # alias kept for symmetry with future call sites
-    ok_ = passed
 
     @classmethod
     def reject(cls, reason: str, detail: str = "", check_name: str = "") -> "Verdict":

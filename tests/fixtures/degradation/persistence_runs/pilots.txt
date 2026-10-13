@@ -1,0 +1,179 @@
+
+===== chat_log_redaction_minimal
+# tamper=('files', 'payload/redaction_result.json') paths=9 (len==1)
+# 9s, 36 runs
+baseline=REJECT  ok=True  vacuous=False
+counts: relation=MR-4, reason_mode=severity_only, tamper_site=['files', 'payload/redaction_result.json'], convicting_reasons=1, paths=8, paths_probed=8, paths_no_ladder_v3=0, rungs_skipped_ancestor=0, legs=34, distinct_runs=36, persisted=33, erased=0, demoted=0, masked=0, masked_upstream=0, masked_spoken=0, findings_tier1=0, findings_tier2=0, crashes=1, quarantined=0, declared_limits=0
+reason census: exit=1=33, exit=2=1, verifier ERROR in BundleVerifier.verify: TypeError: 'NoneType' object is not iterable
+Traceback (most recent call last):=1
+  [crash] ['typed_checks'] rung=null: the check CRASHED on producer-controlled bytes — outranks REJECT so it is not an MR-1 softening, but a crashed checker is not a disagreement: ('exit=2', "verifier ERROR in BundleVerifier.verify: TypeError: 'NoneType' object is not iterable\nTraceback (most recent call last):")
+  ['bundle_id'] shape_preserving -> REJECT ['exit=1']
+  ['bundle_id'] empty_same_type -> REJECT ['exit=1']
+  ['bundle_id'] wrong_type -> REJECT ['exit=1']
+  ['bundle_id'] null -> REJECT ['exit=1']
+  ['bundle_id'] absent -> REJECT ['exit=1']
+  ['created_at'] shape_preserving -> REJECT ['exit=1']
+  ['created_at'] empty_same_type -> REJECT ['exit=1']
+  ['created_at'] wrong_type -> REJECT ['exit=1']
+  ['created_at'] null -> REJECT ['exit=1']
+  ['created_at'] absent -> REJECT ['exit=1']
+  ['cross_refs'] wrong_type -> REJECT ['exit=1']
+  ['cross_refs'] null -> REJECT ['exit=1']
+  ['cross_refs'] absent -> REJECT ['exit=1']
+  ['fragment_anchors'] shape_preserving -> REJECT ['exit=1']
+  ['fragment_anchors'] empty_same_type -> REJECT ['exit=1']
+  ['fragment_anchors'] wrong_type -> REJECT ['exit=1']
+  ['fragment_anchors'] null -> REJECT ['exit=1']
+  ['fragment_anchors'] absent -> REJECT ['exit=1']
+  ['payload'] wrong_type -> REJECT ['exit=1']
+  ['payload'] null -> REJECT ['exit=1']
+  ['payload'] absent -> REJECT ['exit=1']
+  ['schema_version'] shape_preserving -> REJECT ['exit=1']
+  ['schema_version'] empty_same_type -> REJECT ['exit=1']
+  ['schema_version'] wrong_type -> REJECT ['exit=1']
+  ['schema_version'] null -> REJECT ['exit=1']
+  ['schema_version'] absent -> REJECT ['exit=1']
+  ['spec_files'] wrong_type -> REJECT ['exit=1']
+  ['spec_files'] null -> REJECT ['exit=1']
+  ['spec_files'] absent -> REJECT ['exit=1']
+  ['typed_checks'] shape_preserving -> REJECT ['exit=1']
+  ['typed_checks'] empty_same_type -> REJECT ['exit=1']
+  ['typed_checks'] wrong_type -> REJECT ['exit=1']
+  ['typed_checks'] null -> ERROR_CRASH ['exit=2', "verifier ERROR in BundleVerifier.verify: TypeError: 'NoneTyp"]
+  ['typed_checks'] absent -> REJECT ['exit=1']
+
+===== dc_emissions_mrv_minimal
+# tamper=('files', 'payload/nsr_submission.json') paths=9 (len==1)
+# 8s, 36 runs
+baseline=REJECT  ok=True  vacuous=False
+counts: relation=MR-4, reason_mode=severity_only, tamper_site=['files', 'payload/nsr_submission.json'], convicting_reasons=1, paths=8, paths_probed=8, paths_no_ladder_v3=0, rungs_skipped_ancestor=0, legs=34, distinct_runs=36, persisted=33, erased=0, demoted=0, masked=0, masked_upstream=0, masked_spoken=0, findings_tier1=0, findings_tier2=0, crashes=1, quarantined=0, declared_limits=0
+reason census: exit=1=33, exit=2=1, verifier ERROR in BundleVerifier.verify: TypeError: 'NoneType' object is not iterable
+Traceback (most recent call last):=1
+  [crash] ['typed_checks'] rung=null: the check CRASHED on producer-controlled bytes — outranks REJECT so it is not an MR-1 softening, but a crashed checker is not a disagreement: ('exit=2', "verifier ERROR in BundleVerifier.verify: TypeError: 'NoneType' object is not iterable\nTraceback (most recent call last):")
+  ['bundle_id'] shape_preserving -> REJECT ['exit=1']
+  ['bundle_id'] empty_same_type -> REJECT ['exit=1']
+  ['bundle_id'] wrong_type -> REJECT ['exit=1']
+  ['bundle_id'] null -> REJECT ['exit=1']
+  ['bundle_id'] absent -> REJECT ['exit=1']
+  ['created_at'] shape_preserving -> REJECT ['exit=1']
+  ['created_at'] empty_same_type -> REJECT ['exit=1']
+  ['created_at'] wrong_type -> REJECT ['exit=1']
+  ['created_at'] null -> REJECT ['exit=1']
+  ['created_at'] absent -> REJECT ['exit=1']
+  ['cross_refs'] wrong_type -> REJECT ['exit=1']
+  ['cross_refs'] null -> REJECT ['exit=1']
+  ['cross_refs'] absent -> REJECT ['exit=1']
+  ['fragment_anchors'] shape_preserving -> REJECT ['exit=1']
+  ['fragment_anchors'] empty_same_type -> REJECT ['exit=1']
+  ['fragment_anchors'] wrong_type -> REJECT ['exit=1']
+  ['fragment_anchors'] null -> REJECT ['exit=1']
+  ['fragment_anchors'] absent -> REJECT ['exit=1']
+  ['payload'] wrong_type -> REJECT ['exit=1']
+  ['payload'] null -> REJECT ['exit=1']
+  ['payload'] absent -> REJECT ['exit=1']
+  ['schema_version'] shape_preserving -> REJECT ['exit=1']
+  ['schema_version'] empty_same_type -> REJECT ['exit=1']
+  ['schema_version'] wrong_type -> REJECT ['exit=1']
+  ['schema_version'] null -> REJECT ['exit=1']
+  ['schema_version'] absent -> REJECT ['exit=1']
+  ['spec_files'] wrong_type -> REJECT ['exit=1']
+  ['spec_files'] null -> REJECT ['exit=1']
+  ['spec_files'] absent -> REJECT ['exit=1']
+  ['typed_checks'] shape_preserving -> REJECT ['exit=1']
+  ['typed_checks'] empty_same_type -> REJECT ['exit=1']
+  ['typed_checks'] wrong_type -> REJECT ['exit=1']
+  ['typed_checks'] null -> ERROR_CRASH ['exit=2', "verifier ERROR in BundleVerifier.verify: TypeError: 'NoneTyp"]
+  ['typed_checks'] absent -> REJECT ['exit=1']
+
+===== healthcare_diagnosis_minimal
+# tamper=('files', 'payload/diagnosis.json') paths=9 (len==1)
+# 8s, 36 runs
+baseline=REJECT  ok=True  vacuous=False
+counts: relation=MR-4, reason_mode=severity_only, tamper_site=['files', 'payload/diagnosis.json'], convicting_reasons=1, paths=8, paths_probed=8, paths_no_ladder_v3=0, rungs_skipped_ancestor=0, legs=34, distinct_runs=36, persisted=33, erased=0, demoted=0, masked=0, masked_upstream=0, masked_spoken=0, findings_tier1=0, findings_tier2=0, crashes=1, quarantined=0, declared_limits=0
+reason census: exit=1=33, exit=2=1, verifier ERROR in BundleVerifier.verify: TypeError: 'NoneType' object is not iterable
+Traceback (most recent call last):=1
+  [crash] ['typed_checks'] rung=null: the check CRASHED on producer-controlled bytes — outranks REJECT so it is not an MR-1 softening, but a crashed checker is not a disagreement: ('exit=2', "verifier ERROR in BundleVerifier.verify: TypeError: 'NoneType' object is not iterable\nTraceback (most recent call last):")
+  ['bundle_id'] shape_preserving -> REJECT ['exit=1']
+  ['bundle_id'] empty_same_type -> REJECT ['exit=1']
+  ['bundle_id'] wrong_type -> REJECT ['exit=1']
+  ['bundle_id'] null -> REJECT ['exit=1']
+  ['bundle_id'] absent -> REJECT ['exit=1']
+  ['created_at'] shape_preserving -> REJECT ['exit=1']
+  ['created_at'] empty_same_type -> REJECT ['exit=1']
+  ['created_at'] wrong_type -> REJECT ['exit=1']
+  ['created_at'] null -> REJECT ['exit=1']
+  ['created_at'] absent -> REJECT ['exit=1']
+  ['cross_refs'] wrong_type -> REJECT ['exit=1']
+  ['cross_refs'] null -> REJECT ['exit=1']
+  ['cross_refs'] absent -> REJECT ['exit=1']
+  ['fragment_anchors'] shape_preserving -> REJECT ['exit=1']
+  ['fragment_anchors'] empty_same_type -> REJECT ['exit=1']
+  ['fragment_anchors'] wrong_type -> REJECT ['exit=1']
+  ['fragment_anchors'] null -> REJECT ['exit=1']
+  ['fragment_anchors'] absent -> REJECT ['exit=1']
+  ['payload'] wrong_type -> REJECT ['exit=1']
+  ['payload'] null -> REJECT ['exit=1']
+  ['payload'] absent -> REJECT ['exit=1']
+  ['schema_version'] shape_preserving -> REJECT ['exit=1']
+  ['schema_version'] empty_same_type -> REJECT ['exit=1']
+  ['schema_version'] wrong_type -> REJECT ['exit=1']
+  ['schema_version'] null -> REJECT ['exit=1']
+  ['schema_version'] absent -> REJECT ['exit=1']
+  ['spec_files'] wrong_type -> REJECT ['exit=1']
+  ['spec_files'] null -> REJECT ['exit=1']
+  ['spec_files'] absent -> REJECT ['exit=1']
+  ['typed_checks'] shape_preserving -> REJECT ['exit=1']
+  ['typed_checks'] empty_same_type -> REJECT ['exit=1']
+  ['typed_checks'] wrong_type -> REJECT ['exit=1']
+  ['typed_checks'] null -> ERROR_CRASH ['exit=2', "verifier ERROR in BundleVerifier.verify: TypeError: 'NoneTyp"]
+  ['typed_checks'] absent -> REJECT ['exit=1']
+
+===== legal_contract_minimal
+# tamper=('files', 'payload/retrieval_result.json') paths=9 (len==1)
+# 11s, 36 runs
+baseline=REJECT  ok=True  vacuous=False
+counts: relation=MR-4, reason_mode=severity_only, tamper_site=['files', 'payload/retrieval_result.json'], convicting_reasons=1, paths=8, paths_probed=8, paths_no_ladder_v3=0, rungs_skipped_ancestor=0, legs=34, distinct_runs=36, persisted=33, erased=0, demoted=0, masked=0, masked_upstream=0, masked_spoken=0, findings_tier1=0, findings_tier2=0, crashes=1, quarantined=0, declared_limits=0
+reason census: exit=1=33, exit=2=1, verifier ERROR in BundleVerifier.verify: TypeError: 'NoneType' object is not iterable
+Traceback (most recent call last):=1
+  [crash] ['typed_checks'] rung=null: the check CRASHED on producer-controlled bytes — outranks REJECT so it is not an MR-1 softening, but a crashed checker is not a disagreement: ('exit=2', "verifier ERROR in BundleVerifier.verify: TypeError: 'NoneType' object is not iterable\nTraceback (most recent call last):")
+  ['bundle_id'] shape_preserving -> REJECT ['exit=1']
+  ['bundle_id'] empty_same_type -> REJECT ['exit=1']
+  ['bundle_id'] wrong_type -> REJECT ['exit=1']
+  ['bundle_id'] null -> REJECT ['exit=1']
+  ['bundle_id'] absent -> REJECT ['exit=1']
+  ['created_at'] shape_preserving -> REJECT ['exit=1']
+  ['created_at'] empty_same_type -> REJECT ['exit=1']
+  ['created_at'] wrong_type -> REJECT ['exit=1']
+  ['created_at'] null -> REJECT ['exit=1']
+  ['created_at'] absent -> REJECT ['exit=1']
+  ['cross_refs'] wrong_type -> REJECT ['exit=1']
+  ['cross_refs'] null -> REJECT ['exit=1']
+  ['cross_refs'] absent -> REJECT ['exit=1']
+  ['fragment_anchors'] shape_preserving -> REJECT ['exit=1']
+  ['fragment_anchors'] empty_same_type -> REJECT ['exit=1']
+  ['fragment_anchors'] wrong_type -> REJECT ['exit=1']
+  ['fragment_anchors'] null -> REJECT ['exit=1']
+  ['fragment_anchors'] absent -> REJECT ['exit=1']
+  ['payload'] wrong_type -> REJECT ['exit=1']
+  ['payload'] null -> REJECT ['exit=1']
+  ['payload'] absent -> REJECT ['exit=1']
+  ['schema_version'] shape_preserving -> REJECT ['exit=1']
+  ['schema_version'] empty_same_type -> REJECT ['exit=1']
+  ['schema_version'] wrong_type -> REJECT ['exit=1']
+  ['schema_version'] null -> REJECT ['exit=1']
+  ['schema_version'] absent -> REJECT ['exit=1']
+  ['spec_files'] wrong_type -> REJECT ['exit=1']
+  ['spec_files'] null -> REJECT ['exit=1']
+  ['spec_files'] absent -> REJECT ['exit=1']
+  ['typed_checks'] shape_preserving -> REJECT ['exit=1']
+  ['typed_checks'] empty_same_type -> REJECT ['exit=1']
+  ['typed_checks'] wrong_type -> REJECT ['exit=1']
+  ['typed_checks'] null -> ERROR_CRASH ['exit=2', "verifier ERROR in BundleVerifier.verify: TypeError: 'NoneTyp"]
+  ['typed_checks'] absent -> REJECT ['exit=1']
+
+===== spectra_minimal
+UNRUNNABLE: no files entry under outputs/ or payload/ to tamper; baseline on a copy: exit=1
+    FAIL
+      [conservation] EXTRA_FILE_NOT_IN_MANIFEST: 'SpanReDerivationCheck.py': present in bundle_dir but absent from manifest.files
+      [conservation] EXTRA_FILE_NOT_IN_MANIFEST: 'ThreeSetReDerivationCheck.py': present in bundle_dir but absent from manifest.files
+      [conservation] EXTRA_FILE_NOT_IN_MANIFEST: '_build_bundle.py': present in bundle_dir but absent from manifest.files

@@ -603,3 +603,141 @@ def test_degrading_the_proposal_never_buys_a_softer_verdict():
     assert rep.baseline == Severity.PASS
     assert not rep.findings, [f.detail for f in rep.findings]
     assert not rep.crashes and not rep.quarantined
+
+
+# ---------------------------------------------------------------------------
+# a consumer's refusal REASON reaches the row (the internal design notes, controls C1–C5)
+# ---------------------------------------------------------------------------
+
+
+def _admit_with(sig, *, world=None):
+    proposal = HONEST
+    ctx = SimpleNamespace(world=world or honest_world(), proposal=proposal)
+    adm = M.admit(make_roster(proposal), ctx, signature_valid=sig, validate_content=validate, is_stale=is_stale, nonce="n")
+    return {r["record_id"]: r for r in adm.rows}, adm
+
+
+def test_c1_a_consumer_that_refuses_with_a_reason_puts_it_on_the_unusable_row():
+    why = "the seat's receipt is for another run"
+
+    def sig(exp, rec):
+        return M.Refused(why) if exp.authority == "bank" else sig_ok(exp, rec)
+
+    rows, adm = _admit_with(sig)
+    row = rows["bank:payee"]
+    assert (row["disposition"], row["reason"], row["record"]) == (M.UNUSABLE, f"provenance refused: {why}", None)
+    assert rows["erp:vendor"]["disposition"] == M.ADMITTED
+    states = M.proposition_states(adm.rows, checks(HONEST, adm.rows), propositions=PROPS, table=TABLE)
+    ov = M.overall(states, adm.rows, table=TABLE)
+    assert ov["decision"] == "REFUSE" and ov["unusable_records"] == ["bank:payee"]
+
+
+def test_c2_a_bool_consumer_is_unchanged_generic_on_false_admitted_on_true():
+    rows, _ = _admit_with(lambda exp, rec: False)
+    assert {r["reason"] for r in rows.values()} == {"signature does not validate under the declared key"}
+    assert {r["disposition"] for r in rows.values()} == {M.UNUSABLE}
+    rows, _ = _admit_with(lambda exp, rec: True)
+    assert {r["disposition"] for r in rows.values()} == {M.ADMITTED}
+
+
+@pytest.mark.parametrize(
+    "why, expected",
+    [
+        ("UNUSABLE:x:PASS\n", "provenance refused: UNUSABLE;x;PASS?"),  # the face's delimiter and a newline
+        ("a" * 400, "provenance refused: " + "a" * 160 + "\u2026"),  # over the cap
+        ("", "signature does not validate under the declared key"),  # an empty reason is no reason
+        ("\x00\x1b[31m", "provenance refused: ??[31m"),  # control bytes, an ANSI escape
+        ("caf\u00e9 \u2014 ok", "provenance refused: caf\u00e9 \u2014 ok"),  # printable non-ASCII stays
+        # the prereg said "\x00" -> the generic sentence; MEASURED: a scrubbed byte leaves its
+        # mark (the internal design notes Results, prediction FALSIFIED and kept as behaviour)
+        ("\x00", "provenance refused: ?"),
+        # a fullwidth colon folds to ':' under NFKC (red team, Stage 5): normalised, then replaced
+        ("UNUSABLE\uff1arec-9\uff1aADMITTED", "provenance refused: UNUSABLE;rec-9;ADMITTED"),
+        # the ratio colon does not fold; it stays (cosmetic, declared)
+        ("a\u2236b", "provenance refused: a\u2236b"),
+        # combining marks are printable and pass (cosmetic, declared)
+        ("e\u0301\u0301 ok", "provenance refused: \u00e9\u0301 ok"),
+    ],
+)
+def test_c3_the_consumer_text_is_bounded_before_it_reaches_the_face(why, expected):
+    rows, _ = _admit_with(lambda exp, rec: M.Refused(why))
+    assert rows["bank:payee"]["reason"] == expected
+    assert rows["bank:payee"]["disposition"] == M.UNUSABLE
+
+
+def test_c3_a_non_str_why_is_refused_at_construction_in_the_consumers_frame():
+    with pytest.raises(TypeError):
+        M.Refused(123)  # type: ignore[arg-type]
+    with pytest.raises(TypeError):
+        M.Refused(None)  # type: ignore[arg-type]
+
+
+def test_c3_refused_is_final_so_no_subclass_can_override_bool_and_be_admitted():
+    """Stage 5, red team SEVERE (SIGVALID_REASON_AUDIT.md #1): `class HostileBool(Refused):
+    __bool__ -> True` was ADMITTED — `admit` tests truthiness before the formatter's
+    exact-type check. The class is now final: the attack cannot be constructed."""
+    with pytest.raises(TypeError, match="final"):
+
+        class HostileBool(M.Refused):  # noqa: F841
+            def __bool__(self):
+                return True
+
+    with pytest.raises(TypeError, match="final"):
+
+        class Quiet(M.Refused):  # noqa: F841 — any subclass, hostile or not
+            pass
+
+
+def test_c3_a_constructor_bypassed_refused_with_a_hostile_why_is_never_read_and_never_raises():
+    """The red team's blocked attack, kept as a control: `object.__new__` skips
+    `__post_init__`; a `why` that is not a str (with raising dunders) yields the generic
+    sentence and nothing raises inside `admit`."""
+
+    class Hostile:
+        def __str__(self):
+            raise RuntimeError("hostile str")
+
+        def __repr__(self):
+            raise RuntimeError("hostile repr")
+
+        def __len__(self):
+            raise RuntimeError("hostile len")
+
+        def __iter__(self):
+            raise RuntimeError("hostile iter")
+
+    bypassed = object.__new__(M.Refused)
+    object.__setattr__(bypassed, "why", Hostile())
+    assert bool(bypassed) is False
+    rows, _ = _admit_with(lambda exp, rec: bypassed)
+    assert rows["bank:payee"]["disposition"] == M.UNUSABLE
+    assert rows["bank:payee"]["reason"] == "signature does not validate under the declared key"
+
+
+def test_c4_refused_is_falsy_so_a_coercing_reader_still_reads_a_refusal():
+    r = M.Refused("anything")
+    assert bool(r) is False and not r
+    assert bool(M.Refused("")) is False
+    # a wrapper that coerces loses the reason and lands on the generic sentence — never on ADMITTED
+    rows, _ = _admit_with(lambda exp, rec: bool(M.Refused("why")))
+    assert rows["bank:payee"]["disposition"] == M.UNUSABLE
+    assert rows["bank:payee"]["reason"] == "signature does not validate under the declared key"
+
+
+def test_c5_the_reason_is_a_frozen_str_and_the_admission_still_serialises():
+    rows, adm = _admit_with(lambda exp, rec: M.Refused("why"))
+    with pytest.raises(TypeError):
+        rows["bank:payee"]["reason"] = "edited"  # type: ignore[index]
+    json.dumps(adm.rows)
+    assert json.loads(json.dumps(adm.rows))[1]["reason"] == "provenance refused: why"
+
+
+def test_c3_the_bound_is_bounded_work_a_16mib_why_is_cut_before_it_is_scrubbed():
+    """Red team MINOR: the scrub ran over the whole `why` before the cap (~1.1 s at 16 MiB).
+    Now a slice of 4×cap precedes normalisation; the marker survives."""
+    import time
+
+    t0 = time.perf_counter()
+    rows, _ = _admit_with(lambda exp, rec: M.Refused("a" * (16 * 1024 * 1024)))
+    assert time.perf_counter() - t0 < 1.0
+    assert rows["bank:payee"]["reason"] == "provenance refused: " + "a" * 160 + "\u2026"

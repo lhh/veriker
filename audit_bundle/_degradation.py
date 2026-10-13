@@ -94,6 +94,7 @@ __all__ = [
     "UnsupportedRoot",
     "build_ladder",
     "probe_monotonicity",
+    "probe_persistence",
     "reasons_adapter",
     "verdict_adapter",
     "plugin_result_adapter",
@@ -201,6 +202,9 @@ class Finding:
     base_severity: Severity
     rung_severity: Severity
     detail: str
+    # MR-4 `masked` only: the convicting reasons the face LOST. Part of the
+    # waiver key -- see `_waiver_key`.
+    missing: frozenset = frozenset()
 
 
 @dataclass
@@ -547,7 +551,7 @@ def plugin_result_adapter(fn: Callable) -> Callable:
 # --- the probe -------------------------------------------------------------
 
 
-_RELATIONS = ("MR-1", "MR-2")
+_RELATIONS = ("MR-1", "MR-2", "MR-4")
 
 
 def _waiver_key(f: Finding) -> tuple:
@@ -559,8 +563,16 @@ def _waiver_key(f: Finding) -> tuple:
     `ok` flipped green and the staleness check never fired, because the key
     still matched. A waiver must name what it excuses precisely enough that a
     WORSE hit is a different, un-excused hit.
+
+    RED TEAM 2026-09-12 (stage 5, `DEGRADATION_PERSISTENCE_AUDIT.md` R1): the
+    same hole one bucket over. An MR-4 `masked` finding is REJECT -> REJECT
+    whatever it lost, so a waiver written for "1 of 2 convicting reasons
+    dropped" excused a later TOTAL masking at the same spot, ok=True both
+    runs, no stale raise. The key now carries the SET OF LOST REASONS as a
+    sixth element for masked findings; a waiver for {A} does not match {A, B}.
     """
-    return (f.path, f.rung, f.relation, f.base_severity, f.rung_severity)
+    key = (f.path, f.rung, f.relation, f.base_severity, f.rung_severity)
+    return key + (f.missing,) if f.missing else key
 
 
 def _file(rep: Report, declared: dict, used: set, f: Finding) -> None:
@@ -571,6 +583,122 @@ def _file(rep: Report, declared: dict, used: set, f: Finding) -> None:
         rep.declared_limits.append((f, declared[key]))
         return
     (rep.disclosures if f.relation == "MR-2" else rep.findings).append(f)
+
+
+def _validate_declared(declared: dict | None) -> dict:
+    declared = dict(declared or {})
+    for key, reason in declared.items():
+        if not (
+            isinstance(key, tuple)
+            and len(key) in (5, 6)
+            and isinstance(key[0], tuple)
+            and key[1] in _RUNG_ORDER
+            and key[2] in _RELATIONS
+            and isinstance(key[3], Severity)
+            and isinstance(key[4], Severity)
+            and (len(key) == 5 or (isinstance(key[5], frozenset) and key[5]))
+        ):
+            raise DegradationConfigError(
+                f"declared key must be (path_tuple, rung_name, relation, "
+                f"base_severity, rung_severity[, frozenset(lost_reasons)]) — "
+                f"rung one of {_RUNG_ORDER}, relation one of {_RELATIONS}, "
+                f"both severities from `Severity`; the sixth element is "
+                f"REQUIRED for an MR-4 `masked` waiver and must be non-empty. "
+                f"Got {key!r}. The transition is part of the key BY DESIGN: a "
+                f"waiver keyed on the spot alone excused whatever softening "
+                f"turned up there, including a worse one."
+            )
+        if not isinstance(reason, str) or not reason.strip():
+            raise DegradationConfigError(
+                f"declared {key!r} needs a non-empty reason — an undocumented "
+                f"waiver is how a real hit gets retired quietly"
+            )
+    return declared
+
+
+def _make_scorer(run: Callable, cache: dict) -> Callable:
+    """The memoised, fail-closed scorer both probes share.
+
+    `run(root) -> (severity, reasons[, spoke])`. A raise on the UNTOUCHED
+    fixture (`fatal=True`) is a configuration error; a raise on a degraded
+    leg is cached as `_LegRaised` so the ladder loop quarantines that one leg.
+    """
+
+    def sev_of(root: Any, _where: str = "fixture", *, fatal: bool = True) -> tuple:
+        key = _canon(root)
+        if key not in cache:
+            try:
+                out = run(root)
+            except Exception as exc:  # noqa: BLE001 - re-raised with context
+                # `run` owns the fail-closed decision (a crashed checker is not
+                # a disagreement, and swallowing it here would hide exactly the
+                # crash-to-verdict collapse this oracle is meant to expose).
+                if fatal:
+                    raise DegradationConfigError(
+                        f"run() raised on {_where}: {type(exc).__name__}: "
+                        f"{exc}. Wrap it fail-closed and map the crash to a "
+                        f"severity (ERROR for could-not-conclude) — do not let "
+                        f"the probe decide what a crash means."
+                    ) from exc
+                # A DEGRADED leg. One bad leg costs one leg, not the other 399.
+                cache[key] = _LegRaised(f"{type(exc).__name__}: {exc}")
+            else:
+                if len(out) == 2:
+                    out = (out[0], out[1], True)
+                cache[key] = out
+        got = cache[key]
+        if isinstance(got, _LegRaised):
+            raise got
+        return got
+
+    return sev_of
+
+
+def _raise_if_stale(rep: Report, declared: dict, used: set) -> None:
+    stale = set(declared) - used
+    if stale:
+        # Say what ELSE is on the report. A stale waiver very often means the
+        # transition it named got WORSE rather than went away, and raising
+        # without saying so would hide a live finding behind a config error.
+        live = "; ".join(
+            f"{list(f.path)} {f.rung} {f.relation} "
+            f"{f.base_severity.name}->{f.rung_severity.name}"
+            for f in rep.findings + rep.disclosures
+        )
+        raise DegradationConfigError(
+            f"stale declarations matching nothing: {sorted(map(repr, stale))} — "
+            f"the behaviour they excused is gone, and a live waiver over absent "
+            f"behaviour silently covers the NEXT defect at that path. "
+            + (
+                f"UNEXCUSED on this same run: {live}. A waiver goes stale when "
+                f"the transition it named got WORSE, not only when it went away."
+                if live
+                else "Nothing else is on the report."
+            )
+        )
+
+
+def _reason_set(key_of: Callable, reasons: Any, where: str) -> frozenset:
+    """`frozenset(key_of(r) for r in reasons)`, refusing with a NAMED error.
+
+    RED TEAM 2026-09-12 (R2): a checker returning an unhashable reason (a
+    list) escaped as a bare `TypeError` with no path, unlike every other
+    misconfiguration in this module. Loud, not fail-open -- but a caller that
+    treats `DegradationConfigError` as the one "probe misconfigured" signal
+    would have seen a traceback instead.
+    """
+    try:
+        return frozenset(key_of(r) for r in reasons)
+    except TypeError as exc:
+        raise DegradationConfigError(
+            f"reason from run() on {where} is not hashable under reason_key "
+            f"({type(exc).__name__}: {exc}) — reasons must be hashable, or "
+            f"pass a reason_key that makes them so"
+        ) from exc
+
+
+def _is_prefix(a: tuple, b: tuple) -> bool:
+    return len(a) <= len(b) and tuple(b[: len(a)]) == tuple(a)
 
 
 def probe_monotonicity(
@@ -649,63 +777,10 @@ def probe_monotonicity(
         if paths is None
         else _validate_paths(fixture, paths)
     )
-    declared = dict(declared or {})
-    for key, reason in declared.items():
-        if not (
-            isinstance(key, tuple)
-            and len(key) == 5
-            and isinstance(key[0], tuple)
-            and key[1] in _RUNG_ORDER
-            and key[2] in _RELATIONS
-            and isinstance(key[3], Severity)
-            and isinstance(key[4], Severity)
-        ):
-            raise DegradationConfigError(
-                f"declared key must be (path_tuple, rung_name, relation, "
-                f"base_severity, rung_severity) — rung one of {_RUNG_ORDER}, "
-                f"relation one of {_RELATIONS}, both severities from "
-                f"`Severity`. Got {key!r}. The transition is part of the key "
-                f"BY DESIGN: a waiver keyed on the spot alone excused whatever "
-                f"softening turned up there, including a worse one."
-            )
-        if not isinstance(reason, str) or not reason.strip():
-            raise DegradationConfigError(
-                f"declared {key!r} needs a non-empty reason — an undocumented "
-                f"waiver is how a real hit gets retired quietly"
-            )
+    declared = _validate_declared(declared)
     used_declarations: set = set()
 
-    def sev_of(root: Any, _where: str = "fixture", *, fatal: bool = True) -> tuple:
-        key = _canon(root)
-        if key not in cache:
-            try:
-                out = run(root)
-            except Exception as exc:  # noqa: BLE001 - re-raised with context
-                # `run` owns the fail-closed decision (a crashed checker is not
-                # a disagreement, and swallowing it here would hide exactly the
-                # crash-to-verdict collapse this oracle is meant to expose).
-                if fatal:
-                    # The UNTOUCHED fixture. Nothing downstream means anything
-                    # if the target cannot score it, so this stays a config
-                    # error, and it says WHICH leg produced it.
-                    raise DegradationConfigError(
-                        f"run() raised on {_where}: {type(exc).__name__}: "
-                        f"{exc}. Wrap it fail-closed and map the crash to a "
-                        f"severity (ERROR for could-not-conclude) — do not let "
-                        f"the probe decide what a crash means."
-                    ) from exc
-                # A DEGRADED leg. One bad leg costs one leg, not the other 399:
-                # cached so the same root is not re-invoked, and raised as the
-                # internal signal the ladder loop quarantines.
-                cache[key] = _LegRaised(f"{type(exc).__name__}: {exc}")
-            else:
-                if len(out) == 2:
-                    out = (out[0], out[1], True)
-                cache[key] = out
-        got = cache[key]
-        if isinstance(got, _LegRaised):
-            raise got
-        return got
+    sev_of = _make_scorer(run, cache)
 
     base_sev, base_reasons, _ = sev_of(fixture)
     rep.baseline = base_sev
@@ -871,27 +946,7 @@ def probe_monotonicity(
                 worst_name, worst_sev = rung.name, sev
 
 
-    stale = set(declared) - used_declarations
-    if stale:
-        # Say what ELSE is on the report. A stale waiver very often means the
-        # transition it named got WORSE rather than went away, and raising
-        # without saying so would hide a live finding behind a config error.
-        live = "; ".join(
-            f"{list(f.path)} {f.rung} {f.relation} "
-            f"{f.base_severity.name}->{f.rung_severity.name}"
-            for f in rep.findings + rep.disclosures
-        )
-        raise DegradationConfigError(
-            f"stale declarations matching nothing: {sorted(map(repr, stale))} — "
-            f"the behaviour they excused is gone, and a live waiver over absent "
-            f"behaviour silently covers the NEXT defect at that path. "
-            + (
-                f"UNEXCUSED on this same run: {live}. A waiver goes stale when "
-                f"the transition it named got WORSE, not only when it went away."
-                if live
-                else "Nothing else is on the report."
-            )
-        )
+    _raise_if_stale(rep, declared, used_declarations)
 
     census: dict = {}
     for leg in rep.legs:
@@ -936,12 +991,315 @@ def probe_monotonicity(
     return rep
 
 
+_PARENT_RUNGS = ("parent_scalar", "parent_absent")
+
+
+def probe_persistence(
+    fixture: Any,
+    run: Callable,
+    *,
+    tamper: tuple,
+    paths: Sequence | None = None,
+    declared: dict | None = None,
+    reason_key: Callable | None = None,
+    severity_only: bool = False,
+) -> Report:
+    """MR-4, finding persistence — the oracle's SECOND direction.
+
+    `probe_monotonicity` asks whether breaking an ACCEPTED artifact harder can
+    buy a softer verdict. It cannot see a detector's defect at all: pointed at
+    a scanner (measured 2026-09-12, Skylos `defend`), its V1 gate refuses the
+    interesting fixture because that fixture is REJECTED, and with the
+    exit-code contract inverted the finding VANISHING maps to REJECT, which
+    MR-1 files as a strengthening. `the internal design notes`.
+
+    This relation starts from a CONVICTION. Given a fixture F the target
+    accepts and a tamper (path A, value) the target REJECTS with reasons R,
+    degrade every OTHER path B down its ladder on top of the tamper and ask
+    whether the conviction survives:
+
+      PASS                     TIER-1 `erased`   — an unrelated degradation bought
+                                                  a clean verdict over a convicted
+                                                  artifact
+      ERROR_CLEAN              TIER-2 `demoted`  — the conviction became a
+                                                  could-not-conclude
+      REJECT, R not <= reasons TIER-2 `masked`   — rejected, but the tamper's OWN
+                                                  reason is gone: a different guard
+                                                  fired first and A was never judged
+      ERROR_CRASH              `crashes`         — noise, not a finding: a crash
+                                                  replaces a REJECT's reasons, which
+                                                  is diagnosis, not admission
+      REJECT, R <= reasons     persisted
+
+    Gates, committed before the numerator: V1a F must be PASS (else the
+    conviction is not attributable to the tamper); V1b the tampered fixture
+    must be REJECT, spoken by the check under test, with at least one reason
+    unless `severity_only=True` DECLARES a reason-less surface (an exit-code
+    target); a no-op tamper is a configuration error.
+
+    Sites. B is never A, an ancestor of A, or a descendant of A; and a
+    parent-rung (6/7) whose site is an ancestor of A is skipped — the tamper
+    would leave the artifact, and a mutant whose site left the path is a
+    different result, not a persistence failure. Counted in
+    `counts["rungs_skipped_ancestor"]`, never silent.
+
+    Reason identity is `reason_key(reason)`, default identity. A bare code is
+    shared across sites (`BAD_FILE_SHA` from a degraded sibling is not the
+    tamper's `BAD_FILE_SHA`), so adapters for real targets should carry the
+    detail; a detail that embeds rung-dependent text then produces a FALSE
+    `masked`, and the report's details must be read before a masked hit is
+    counted. ABSENT rungs ARE constrained here: row 20's "absent may pass" is
+    about the deleted field's own verdict, not about a conviction elsewhere.
+    UNSPOKEN rungs are NOT skipped: an upstream refusal that hides A's
+    conviction is the masking this relation exists to see; the leg is labelled
+    `upstream` in the finding.
+
+    `declared` keys are the same 5-tuple as `probe_monotonicity`, relation
+    "MR-4", base_severity always REJECT (the conviction), and a stale waiver
+    raises for the same reason it does there.
+    """
+    rep = Report()
+    cache: dict = {}
+    _validate_fixture(fixture)
+    if not (
+        isinstance(tamper, tuple)
+        and len(tamper) == 2
+        and isinstance(tamper[0], tuple)
+    ):
+        raise DegradationConfigError(
+            f"tamper must be (path_tuple, value); got {tamper!r}"
+        )
+    site, value = tamper
+    _validate_paths(fixture, [site])
+    tampered = _set_at(fixture, site, value)
+    _validate_fixture(tampered)
+    if _canon(tampered) == _canon(fixture):
+        raise DegradationConfigError(
+            f"tamper at {list(site)!r} is a no-op — the fixture already holds "
+            f"{value!r}; a conviction needs a change to convict"
+        )
+    declared = _validate_declared(declared)
+    for key in declared:
+        if key[2] != "MR-4":
+            raise DegradationConfigError(
+                f"declared {key!r}: only MR-4 transitions can be waived here"
+            )
+    used_declarations: set = set()
+    key_of = reason_key or (lambda r: r)
+    sev_of = _make_scorer(run, cache)
+
+    base_sev, base_reasons, _ = sev_of(fixture, "fixture")
+    if base_sev != Severity.PASS:
+        raise DegradationConfigError(
+            f"V1a: the untouched fixture is not accepted (severity="
+            f"{base_sev.name}, reasons={base_reasons!r}) — a conviction on top "
+            f"of a rejected baseline is not attributable to the tamper"
+        )
+    t_sev, t_reasons, t_spoke = sev_of(tampered, "tampered fixture")
+    rep.baseline = t_sev
+    if t_sev == Severity.PASS:
+        raise DegradationConfigError(
+            f"V1b: the tamper at {list(site)!r} is not a conviction — the "
+            f"target ACCEPTS it. That is a probe_check-class finding about the "
+            f"target, not a persistence run; pick a tamper it convicts"
+        )
+    if t_sev != Severity.REJECT:
+        raise DegradationConfigError(
+            f"V1b: the tamper at {list(site)!r} produced {t_sev.name}, not "
+            f"REJECT (reasons={t_reasons!r}). Persistence is a property of a "
+            f"DETERMINATE conviction; a could-not-conclude has nothing to persist"
+        )
+    if not t_spoke:
+        raise DegradationConfigError(
+            f"V1b: the tamper at {list(site)!r} was rejected UPSTREAM of the "
+            f"check under test (spoke=False) — that is the loader's conviction, "
+            f"not the check's"
+        )
+    convicting = _reason_set(key_of, t_reasons, "the tampered fixture")
+    if not convicting and not severity_only:
+        raise DegradationConfigError(
+            f"V1b: the tamper at {list(site)!r} was REJECTED with no reasons, so "
+            f"`masked` is unobservable. Pass severity_only=True to DECLARE a "
+            f"reason-less surface (an exit-code target) rather than have the "
+            f"probe silently downgrade to severity-only"
+        )
+    reason_mode = "severity_only" if (severity_only or not convicting) else "reason"
+
+    all_paths = (
+        [p for p, _ in _walk(tampered)]
+        if paths is None
+        else _validate_paths(tampered, paths)
+    )
+    candidate = [
+        p
+        for p in all_paths
+        if tuple(p) != tuple(site)
+        and not _is_prefix(tuple(p), tuple(site))
+        and not _is_prefix(tuple(site), tuple(p))
+    ]
+
+    probed = 0
+    persisted = 0
+    erased = demoted = masked = 0
+    masked_upstream = 0
+    skipped_ancestor = 0
+    for path in candidate:
+        ladder = build_ladder(tampered, path)
+        if not ladder:
+            rep.no_ladder.append(path)
+            continue
+        ran_here = False
+        for rung in ladder:
+            rung_site = tuple(path[:-1]) if rung.name in _PARENT_RUNGS else tuple(path)
+            if _is_prefix(rung_site, tuple(site)):
+                skipped_ancestor += 1
+                continue
+            try:
+                sev, reasons, spoke = sev_of(
+                    rung.root,
+                    f"path={list(path)!r} rung={rung.name}",
+                    fatal=False,
+                )
+            except _LegRaised as raised:
+                rep.quarantined.append((path, rung.name, raised.label))
+                continue
+            ran_here = True
+            rep.legs.append(Leg(path, rung.name, rung.presence, sev, reasons, spoke))
+            where = "" if spoke else " [upstream: the check under test did not speak]"
+            if sev == Severity.ERROR_CRASH:
+                rep.crashes.append((path, rung.name, reasons))
+                continue
+            if sev == Severity.PASS:
+                erased += 1
+                _file(
+                    rep,
+                    declared,
+                    used_declarations,
+                    Finding(
+                        tier=1,
+                        relation="MR-4",
+                        path=path,
+                        rung=rung.name,
+                        base_rung="tamper",
+                        base_severity=Severity.REJECT,
+                        rung_severity=sev,
+                        detail=(
+                            f"erased: degrading {list(path)!r} ({rung.name}) "
+                            f"bought PASS over an artifact convicted at "
+                            f"{list(site)!r}{where}"
+                        ),
+                    ),
+                )
+                continue
+            if sev == Severity.ERROR_CLEAN:
+                demoted += 1
+                _file(
+                    rep,
+                    declared,
+                    used_declarations,
+                    Finding(
+                        tier=2,
+                        relation="MR-4",
+                        path=path,
+                        rung=rung.name,
+                        base_rung="tamper",
+                        base_severity=Severity.REJECT,
+                        rung_severity=sev,
+                        detail=(
+                            f"demoted: degrading {list(path)!r} ({rung.name}) "
+                            f"turned the conviction at {list(site)!r} into a "
+                            f"could-not-conclude (reasons={reasons!r}){where}"
+                        ),
+                    ),
+                )
+                continue
+            # REJECT
+            if reason_mode == "severity_only":
+                persisted += 1
+                continue
+            got = _reason_set(key_of, reasons, f"path={list(path)!r} rung={rung.name}")
+            missing = convicting - got
+            if not missing:
+                persisted += 1
+                continue
+            masked += 1
+            if not spoke:
+                # An UPSTREAM refusal (a parse boundary, a schema gate) convicted
+                # before the check under test ran. Still filed -- the conviction
+                # IS gone from the face -- but counted apart, because on a
+                # strict-parse verifier this is most of the masked channel and a
+                # report that cannot tell it from a spoken guard firing first is
+                # mostly noise (MEASURED 2026-09-12: 62 of 76 on the production CLI).
+                masked_upstream += 1
+            _file(
+                rep,
+                declared,
+                used_declarations,
+                Finding(
+                    tier=2,
+                    relation="MR-4",
+                    path=path,
+                    rung=rung.name,
+                    base_rung="tamper",
+                    base_severity=Severity.REJECT,
+                    rung_severity=sev,
+                    detail=(
+                        f"masked: still REJECT, but the conviction at "
+                        f"{list(site)!r} lost {sorted(map(repr, missing))}; "
+                        f"the face now says {reasons!r}{where}"
+                    ),
+                    missing=frozenset(missing),
+                ),
+            )
+        if ran_here:
+            probed += 1
+
+    _raise_if_stale(rep, declared, used_declarations)
+
+    census: dict = {}
+    for leg in rep.legs:
+        for code in leg.reasons or ("<PASS>",):
+            census[code] = census.get(code, 0) + 1
+    rep.reason_census = dict(sorted(census.items(), key=lambda kv: -kv[1]))
+    rep.counts = {
+        "relation": "MR-4",
+        "reason_mode": reason_mode,
+        "tamper_site": list(site),
+        "convicting_reasons": len(convicting),
+        "paths": len(candidate),
+        "paths_probed": probed,
+        "paths_no_ladder_v3": len(rep.no_ladder),
+        "rungs_skipped_ancestor": skipped_ancestor,
+        "legs": len(rep.legs),
+        "distinct_runs": len(cache),
+        "persisted": persisted,
+        "erased": erased,
+        "demoted": demoted,
+        "masked": masked,
+        "masked_upstream": masked_upstream,
+        "masked_spoken": masked - masked_upstream,
+        "findings_tier1": sum(1 for f in rep.findings if f.tier == 1),
+        "findings_tier2": sum(1 for f in rep.findings if f.tier == 2),
+        "crashes": len(rep.crashes),
+        "quarantined": len(rep.quarantined),
+        "declared_limits": len(rep.declared_limits),
+    }
+    rep.vacuous = probed == 0
+    rep.ok = not rep.findings and not rep.quarantined and not rep.vacuous
+    return rep
+
+
 def format_report(rep: Report) -> str:
     lines = [
         f"baseline={rep.baseline.name}  ok={rep.ok}  vacuous={rep.vacuous}",
         "counts: " + ", ".join(f"{k}={v}" for k, v in rep.counts.items()),
     ]
-    if rep.vacuous:
+    if rep.vacuous and rep.counts.get("relation") == "MR-4":
+        lines.append(
+            "VACUOUS -- NOT a pass. No sibling path produced a single leg, so "
+            "nothing was ever asked to persist."
+        )
+    elif rep.vacuous:
         lines.append(
             "VACUOUS -- NOT a pass. Either no path had a rejecting "
             "shape_preserving rung (MR-1 trivially true everywhere), or the "

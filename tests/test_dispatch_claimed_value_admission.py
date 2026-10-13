@@ -89,6 +89,7 @@ def _anchored_bundle(tmp_path: Path, outputs):
 def _stub_primitive(value):
     class _P:
         primitive_id = "noop-res02"
+        expects = frozenset()  # declared inputs: this primitive reads no binding param
 
         def recompute(self, inputs, pack_section):
             return RecomputedValue(value=value, detail="stub")

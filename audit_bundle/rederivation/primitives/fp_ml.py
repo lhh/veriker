@@ -89,6 +89,7 @@ class FpMlRecompute:
     """Verifier-side primitive for re-deriving the representative float32 logit."""
 
     primitive_id: str = "fp_ml_recompute"
+    expects = frozenset()  # declared inputs: this primitive reads no binding param
     primitive_shape: str = "floating-point ML"
     primitive_version: str = "1"
     primitive_tier: str = "A"

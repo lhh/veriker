@@ -44,6 +44,7 @@ def compute_total(supplier_chain: list) -> float:
 
 class ClimateEmissionRecompute:
     primitive_id: str = "climate_emission_recompute"
+    expects = frozenset()  # declared inputs: this primitive reads no binding param
     primitive_shape: str = "scalar deterministic aggregate"
     primitive_version: str = "1"
     primitive_tier: str = "B"

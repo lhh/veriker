@@ -147,6 +147,7 @@ class PandemicBenefitEligibilityRecompute:
     """Verifier-side primitive for re-deriving the per-claimant decision list."""
 
     primitive_id: str = "pandemic_benefit_eligibility_recompute"
+    expects = frozenset()  # declared inputs: this primitive reads no binding param
 
     def recompute(self, inputs, pack_section: dict):
         """Recompute the decision list from spec/eligibility_rules.json and

@@ -145,6 +145,7 @@ class DpRecompute:
     """
 
     primitive_id: str = "dp_recompute"
+    expects = frozenset()  # declared inputs: this primitive reads no binding param
     primitive_shape: str = "differential privacy (Laplace seeded-noise aggregate)"
     primitive_version: str = "1"
     primitive_tier: str = "A"

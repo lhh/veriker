@@ -32,12 +32,14 @@ STATE RULE, per proposition, in this order:
 A stale record may CONTRADICT and never CONFIRM. Absence never reads as agreement; a
 SILENT finding is not a confirmation.
 
-DECISION: REFUSE if any proposition is CONTRADICTED, any expected record is UNUSABLE
+DECISION: NO_VERDICT if a consumer callable raised at admission (`Admission.raised`) — the
+verifier broke, so nothing is decided about the subject, and it dominates every outcome below
+(the v-kernel README verdict contract: a crash is never a REJECT); otherwise REFUSE if any proposition is CONTRADICTED, any expected record is UNUSABLE
 (tamper evidence is not absence), a producer-attached record the roster names was not
 delivered (dropping evidence is not "unreached"), or the input was inadmissible; HOLD if
 any proposition is UNREACHED, or INSUFFICIENT with nothing confirming at all, or the
-consumer's `hold_if` policy says so; RELEASE otherwise. The lattice REFUSE < HOLD < RELEASE is `_degradation.Severity`'s
-REJECT > ERROR_CLEAN > PASS, and `improves` compares two runs on that order — so the
+consumer's `hold_if` policy says so; RELEASE otherwise. The lattice NO_VERDICT < REFUSE < HOLD < RELEASE is `_degradation.Severity`'s
+ERROR_CRASH > REJECT > ERROR_CLEAN > PASS, and `improves` compares two runs on that order — so the
 degradation oracle can be pointed at a consumer's verifier without a second vocabulary.
 
 Stdlib only; imports nothing from `verifier`.
@@ -52,7 +54,7 @@ from types import SimpleNamespace
 from .._degradation import Severity
 from ..coverage_channels import account_channels
 from ..plugins.stamp_lattice import STAMP_RANK, StampLatticeCheck
-from ..verdict import VERIFIER_INCOMPLETE, Verdict
+from ..verdict import VERIFIER_INCOMPLETE, VERIFIER_INTERNAL_ERROR, Verdict
 from .roots import RootTable, UndeclaredAuthority
 from .roster import ADMITTED, UNREACHED, UNUSABLE, Admission, admission_channels
 
@@ -69,6 +71,7 @@ __all__ = [
     "REFUSE",
     "HOLD",
     "RELEASE",
+    "NO_VERDICT",
     "DECISION_SEVERITY",
     "TIER_PROPOSER",
     "TIER_INDEPENDENT",
@@ -76,6 +79,7 @@ __all__ = [
     "REASON_RECORD_UNUSABLE",
     "REASON_INPUT_INADMISSIBLE",
     "REASON_ATTACHMENT_UNDELIVERED",
+    "REASON_CONSUMER_RAISED",
     "ProvenanceError",
     "chain_of",
     "effective_root",
@@ -95,7 +99,16 @@ ESTABLISHED, CONTRADICTED, CANNOT_CONCLUDE = "ESTABLISHED", "CONTRADICTED", "CAN
 UNREACHED_Q, INSUFFICIENT_Q = "UNREACHED", "INSUFFICIENT"
 
 REFUSE, HOLD, RELEASE = "REFUSE", "HOLD", "RELEASE"
-DECISION_SEVERITY = {RELEASE: Severity.PASS, HOLD: Severity.ERROR_CLEAN, REFUSE: Severity.REJECT}
+#: The run produced no verdict: a consumer callable raised at admission (`Admission.raised`).
+#: A crash-ERROR in the README's verdict contract — about the VERIFIER, never the subject — so
+#: it is never a REFUSE (alert-laundering) and it dominates every other outcome.
+NO_VERDICT = "NO_VERDICT"
+DECISION_SEVERITY = {
+    RELEASE: Severity.PASS,
+    HOLD: Severity.ERROR_CLEAN,
+    REFUSE: Severity.REJECT,
+    NO_VERDICT: Severity.ERROR_CRASH,
+}
 
 #: The S1 tiers this engine uses. A mapping onto S1's vocabulary, declared once: content
 #: written under the proposer's own administrative root is INTERNAL_SOURCE; content from
@@ -112,6 +125,7 @@ REASON_CONTRADICTED = "MULTI_ROOT_CONTRADICTED"
 REASON_RECORD_UNUSABLE = "MULTI_ROOT_RECORD_UNUSABLE"
 REASON_INPUT_INADMISSIBLE = "INPUT_INADMISSIBLE_PROPOSAL"
 REASON_ATTACHMENT_UNDELIVERED = "MULTI_ROOT_ATTACHMENT_UNDELIVERED"
+REASON_CONSUMER_RAISED = VERIFIER_INTERNAL_ERROR  # verdict.py's crash-class code, not a new one
 
 _GRADER = StampLatticeCheck()  # no key: any upgrade-bearing record is refused (fail-closed)
 
@@ -299,11 +313,19 @@ def overall(
     table: RootTable,
     hold_if: Callable[[Mapping], bool] | None = None,
     inadmissible: str | None = None,
+    raised: "Iterable | None" = None,
 ) -> dict:
     """The decision. `hold_if(states)` is the consumer's release policy: it can only move a
     RELEASE to HOLD; it cannot lift a REFUSE or an UNREACHED hold. `inadmissible` is
     `Admission.inadmissible`: an inadmissible input REFUSES (the artifact is bad), it is
     never a could-not-conclude.
+
+    `raised` is `Admission.raised`: a consumer callable that raised at admission. That is the
+    verifier breaking, not a finding about the subject, so the decision is NO_VERDICT and it
+    dominates everything — a REFUSE here would be indistinguishable from a real one, which the
+    v-kernel verdict contract (README, "tri-state + exit codes") forbids as alert-laundering;
+    a crash short-circuits the meet `crash-ERROR > REJECT > clean-ERROR > OK`. The rows keep
+    their conservative dispositions for the face; the decision does not read them.
 
     Pass the `Admission` itself as `rows` and the flag travels with it. Red-team witness
     (2026-09-06): a consumer helper that rebuilt `overall` from loose rows dropped the flag
@@ -312,7 +334,10 @@ def overall(
     if isinstance(rows, Admission):
         if inadmissible is None:
             inadmissible = rows.inadmissible
+        if raised is None:
+            raised = rows.raised
         rows = rows.rows
+    raised = tuple(raised or ())
     rows = list(rows)
     contradicted = [p for p, s in states.items() if s["state"] == CONTRADICTED]
     unusable = [r["record_id"] for r in rows if r["disposition"] == UNUSABLE]
@@ -323,7 +348,9 @@ def overall(
     established = [p for p, s in states.items() if s["state"] == ESTABLISHED]
     residual = [p for p in insufficient if states[p]["proposer_root_confirms"]]
     policy_hold = bool(hold_if(states)) if hold_if is not None else False
-    if contradicted or unusable or undelivered or inadmissible:
+    if raised:
+        decision = NO_VERDICT
+    elif contradicted or unusable or undelivered or inadmissible:
         decision = REFUSE
     elif unreached or unconfirmed or policy_hold:
         decision = HOLD
@@ -382,8 +409,10 @@ def improves(degraded: Mapping, counterpart: Mapping, *, propositions: Iterable[
 
 
 def to_verdict(ov: Mapping, *, check_name: str = "multi_root") -> Verdict:
-    """The tri-state face: REFUSE -> REJECT, HOLD -> clean ERROR (could not conclude),
-    RELEASE -> OK. Exit codes follow `verdict.exit_code`."""
+    """The tri-state face: NO_VERDICT -> crash ERROR, REFUSE -> REJECT, HOLD -> clean ERROR
+    (could not conclude), RELEASE -> OK. Exit codes follow `verdict.exit_code`."""
+    if ov["decision"] == NO_VERDICT:
+        return Verdict.error(REASON_CONSUMER_RAISED, "a consumer callable raised at admission: no verdict", check_name=check_name)
     if ov["decision"] == REFUSE:
         if ov.get("inadmissible_input"):
             return Verdict.reject(REASON_INPUT_INADMISSIBLE, str(ov["inadmissible_input"]), check_name=check_name)

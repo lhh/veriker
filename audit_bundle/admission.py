@@ -231,7 +231,7 @@ def admit_json_file(
     """
     try:
         size = path.stat().st_size
-    except OSError as exc:
+    except (OSError, ValueError) as exc:  # ValueError: a NUL byte or a lone surrogate in the path (exception_escape layer 1)
         raise InputInadmissible(
             Verdict.reject(
                 INPUT_SIZE_EXCEEDED, f"{path.name}: cannot stat: {exc}", check_name
@@ -247,7 +247,7 @@ def admit_json_file(
         )
     try:
         raw = path.read_bytes()
-    except OSError as exc:
+    except (OSError, ValueError) as exc:
         raise InputInadmissible(
             Verdict.reject(
                 INPUT_SIZE_EXCEEDED, f"{path.name}: unreadable: {exc}", check_name
@@ -301,7 +301,7 @@ def admit_jsonl_file(
     """
     try:
         size = path.stat().st_size
-    except OSError as exc:
+    except (OSError, ValueError) as exc:  # ValueError: a NUL byte or a lone surrogate in the path (exception_escape layer 1)
         raise InputInadmissible(
             Verdict.reject(
                 INPUT_SIZE_EXCEEDED, f"{path.name}: cannot stat: {exc}", check_name
@@ -317,7 +317,7 @@ def admit_jsonl_file(
         )
     try:
         raw = path.read_bytes()
-    except OSError as exc:
+    except (OSError, ValueError) as exc:
         raise InputInadmissible(
             Verdict.reject(
                 INPUT_SIZE_EXCEEDED, f"{path.name}: unreadable: {exc}", check_name
@@ -384,7 +384,7 @@ def iter_admitted_jsonl_tolerant(
     """
     try:
         size = path.stat().st_size
-    except OSError as exc:
+    except (OSError, ValueError) as exc:  # ValueError: a NUL byte or a lone surrogate in the path (exception_escape layer 1)
         raise InputInadmissible(
             Verdict.reject(
                 INPUT_SIZE_EXCEEDED, f"{path.name}: cannot stat: {exc}", check_name
@@ -400,7 +400,7 @@ def iter_admitted_jsonl_tolerant(
         )
     try:
         fh = path.open("rb")
-    except OSError as exc:
+    except (OSError, ValueError) as exc:  # the same family as the stat above (unreachable past it; kept uniform)
         raise InputInadmissible(
             Verdict.reject(
                 INPUT_SIZE_EXCEEDED, f"{path.name}: unreadable: {exc}", check_name

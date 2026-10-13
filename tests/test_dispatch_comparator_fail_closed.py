@@ -100,6 +100,7 @@ def test_comparator_that_raises_is_recorded_not_propagated(tmp_path, monkeypatch
 
     class _FakePrimitive:
         primitive_id = "noop-unregistered"
+        expects = frozenset()  # declared inputs: this primitive reads no binding param
 
         def recompute(self, inputs, pack_section):
             from audit_bundle.plugin import RecomputedValue

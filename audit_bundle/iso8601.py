@@ -17,7 +17,13 @@ Contract — refuse, never guess:
   of that rule (assume UTC / assume local) is a direction an adversary or a
   misconfigured host can push a verdict. Refuse > skew;
 * the result is timezone-aware and normalised to UTC via ``astimezone`` — an
-  explicit non-UTC offset is CONVERTED, never dropped.
+  explicit non-UTC offset is CONVERTED, never dropped;
+* the ONLY exception this module raises is ``ValueError``, on ANY input (the helper
+  contract, exception_escape/SPEC.md layer 1, enforced over the whole helper register by
+  ``tests/test_helper_error_family_contract.py``). Measured 2026-09-21: an instant whose
+  offset pushes it outside ``datetime``'s range raised ``OverflowError`` out of
+  ``astimezone``, past 38 call sites that catch ``ValueError`` — one such value inside an
+  authority-signed record crashed a whole join run. It is now a ``ValueError``.
 
 The body of :func:`parse_iso8601_utc` is deliberately byte-identical (after
 docstring/string normalisation) to the copy the standalone reference packs carry
@@ -40,7 +46,8 @@ def parse_iso8601_utc(value: str) -> "datetime":
     """Parse an ISO-8601 instant to a timezone-aware UTC datetime.
 
     Raises ``ValueError`` on: a non-string or empty input, any malformed
-    string, and a NAIVE timestamp (no ``Z`` / offset). Accepts the ``Z``
+    string, a NAIVE timestamp (no ``Z`` / offset), and an instant outside the
+    representable range once converted to UTC. Nothing else. Accepts the ``Z``
     suffix, offset notation, and fractional seconds; an explicit non-UTC
     offset is converted to UTC (``astimezone``), never discarded.
     """
@@ -50,7 +57,12 @@ def parse_iso8601_utc(value: str) -> "datetime":
     dt = datetime.fromisoformat(normalized)  # raises ValueError on malformed input
     if dt.tzinfo is None:
         raise ValueError(f"{value!r} has no UTC offset")
-    return dt.astimezone(timezone.utc)
+    try:
+        return dt.astimezone(timezone.utc)
+    except OverflowError:
+        # the offset pushes the instant outside datetime's range (0001-01-01T00:00:00+01:00,
+        # 9999-12-31T23:59:59-01:00): a refusal in the documented family, never a crash
+        raise ValueError(f"{value!r} is outside the representable range once in UTC") from None
 
 
 def parse_iso8601_utc_ms(value: str) -> int:
